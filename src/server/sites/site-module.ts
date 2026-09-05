@@ -444,6 +444,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       try {
       const total = sorted.reduce((sum, entry) => sum + entry.sizeBytes, 0)
       if (sorted.length > config.limits.maxFilesPerSite) throw new DomainError('QUOTA_EXCEEDED', 'Site file count limit exceeded')
+      if (pendingCleanups.size) throw new DomainError('STORAGE_UNAVAILABLE', 'Storage cleanup must finish before accepting another revision')
       const releaseQuota = await reserveQuota(total, 0, total, true)
       let published = false; let cleanupOwnsQuota = false
       const siteId = opaqueId(); const revisionId = opaqueId()
