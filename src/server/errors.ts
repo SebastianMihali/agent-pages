@@ -27,10 +27,28 @@ export function isDomainError(value: unknown): value is DomainError {
 
 export type Principal = Readonly<{ ownerId: string }>
 
+function describeCause(value: unknown) {
+  if (!(value instanceof Error)) return { name: 'Unknown', message: String(value) }
+  const code = (value as { code?: unknown }).code
+  return { name: value.name, message: value.message, ...(typeof code === 'string' ? { code } : {}) }
+}
+
+/**
+ * Records a failure an operator must act on. Domain outcomes without a cause
+ * (conflicts, denials, limits) are expected results and stay out of the log;
+ * storage failures and foreign errors are logged with their underlying cause.
+ * Responses remain unchanged, so the cause never reaches the client.
+ */
+export function logFailure(event: string, error: unknown, fields: Record<string, string> = {}) {
+  if (isDomainError(error) && error.code !== 'STORAGE_UNAVAILABLE' && error.cause === undefined) return
+  const cause = isDomainError(error) && error.cause !== undefined ? error.cause : error
+  console.error(JSON.stringify({ event, ...fields, ...(isDomainError(error) ? { code: error.code } : {}), cause: describeCause(cause) }))
+}
+
 export function errorResponse(error: unknown): Response {
   const known = isDomainError(error) ? error : new DomainError('STORAGE_UNAVAILABLE', 'The operation could not be completed', undefined, { cause: error })
   const requestId = crypto.randomUUID()
-  if (!isDomainError(error)) console.error(JSON.stringify({ event: 'request_failed', requestId }))
+  logFailure('request_failed', error, { requestId })
   return Response.json({ error: {
     code: known.code, message: known.message, retryable: known.retryable, requestId,
     ...(known.details ? { details: known.details } : {}),

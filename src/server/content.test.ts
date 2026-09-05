@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { createAuth } from './auth'
 import { parseConfig } from './config'
 import { openDatabase } from './db'
@@ -47,7 +47,14 @@ it('authorizes before file routing and serves public nested routes, MIME and HEA
     expect(head.headers.get('content-length')).toBe('6')
     expect(await head.text()).toBe('')
     expect((await get('index.html', { headers: { 'service-worker': 'script' } })).status).toBe(404)
-    expect((await get('%2findex.html')).status).toBe(404)
-    expect((await get('_agent/session')).status).toBe(404)
+    // Malformed visitor requests are expected outcomes: 404 without an operator log entry.
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect((await get('%2findex.html')).status).toBe(404)
+      expect((await get('%zz')).status).toBe(404)
+      expect((await get('_agent/session')).status).toBe(404)
+      expect((await get('_agent/session', { method: 'POST', headers: { origin: config.appOrigin, 'content-type': 'application/x-www-form-urlencoded' }, body: new Uint8Array([0xff]) })).status).toBe(404)
+      expect(logged).not.toHaveBeenCalled()
+    } finally { logged.mockRestore() }
   } finally { await sites.close(); db.close(); await rm(directory, { recursive: true, force: true }) }
 })

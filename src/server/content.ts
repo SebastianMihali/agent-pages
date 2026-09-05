@@ -3,7 +3,7 @@ import type { SiteModule, RevisionLease } from './sites'
 import type { Access } from './access'
 import { localReturnPath } from './access'
 import { readBody } from './body'
-import { requireOrigin } from './errors'
+import { DomainError, logFailure, requireOrigin } from './errors'
 import { cookie, cookieNames, readCookie } from './web-auth'
 
 const securityHeaders = {
@@ -17,14 +17,20 @@ const securityHeaders = {
 }
 const missing = (head = false) => new Response(head ? null : 'Not found', { status: 404, headers: securityHeaders })
 
+const invalidPath = () => new DomainError('INVALID_PATH', 'Invalid path')
 function contentPath(pathname: string) {
-  if (/%2f|%5c/i.test(pathname)) throw new Error('Invalid path')
-  const decoded = decodeURIComponent(pathname)
-  if (Buffer.byteLength(decoded) > 513 || /[\\%\p{Cc}]/u.test(decoded)) throw new Error('Invalid path')
+  if (/%2f|%5c/i.test(pathname)) throw invalidPath()
+  let decoded: string
+  try { decoded = decodeURIComponent(pathname) } catch { throw invalidPath() }
+  if (Buffer.byteLength(decoded) > 513 || /[\\%\p{Cc}]/u.test(decoded)) throw invalidPath()
   const parts = decoded.slice(1).split('/')
   if (parts.at(-1) === '') parts.pop()
-  if (parts.length > 32 || parts.some((part) => !part || part.startsWith('.')) || parts[0] === '_agent') throw new Error('Invalid path')
+  if (parts.length > 32 || parts.some((part) => !part || part.startsWith('.')) || parts[0] === '_agent') throw invalidPath()
   return parts.join('/') + (decoded.endsWith('/') && parts.length ? '/' : '')
+}
+function formFields(bytes: Uint8Array) {
+  try { return new URLSearchParams(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) }
+  catch { throw new DomainError('INVALID_INPUT', 'Form body must be UTF-8') }
 }
 
 export function createContentHandler(config: AppConfig, sites: SiteModule, access: Access) {
@@ -38,7 +44,7 @@ export function createContentHandler(config: AppConfig, sites: SiteModule, acces
         if (request.method !== 'POST') return missing()
         requireOrigin(request, config.appOrigin)
         if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') return missing()
-        const body = new URLSearchParams(new TextDecoder('utf-8', { fatal: true }).decode(await readBody(request, 4096)))
+        const body = formFields(await readBody(request, 4096))
         if ([...body.keys()].length !== 1 || !body.has('ticket')) return missing()
         const grant = await access.redeem(body.get('ticket')!, siteId)
         return new Response(null, { status: 303, headers: { ...securityHeaders,
@@ -76,7 +82,10 @@ export function createContentHandler(config: AppConfig, sites: SiteModule, acces
       return new Response(request.method === 'HEAD' ? null : file.body, { status, headers: {
         ...securityHeaders, 'content-type': entry.contentType, 'content-length': String(entry.sizeBytes),
       } })
-    } catch { return missing(request.method === 'HEAD') }
-    finally { if (!transferred) await lease?.release() }
+    } catch (error) {
+      // Visitors always receive 404; only storage and foreign failures are logged.
+      logFailure('content_request_failed', error, { siteId })
+      return missing(request.method === 'HEAD')
+    } finally { if (!transferred) await lease?.release() }
   }
 }

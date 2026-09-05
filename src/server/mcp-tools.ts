@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { AppConfig } from './config'
-import { DomainError, isDomainError, type Principal } from './errors'
+import { DomainError, isDomainError, logFailure, type Principal } from './errors'
 import { siteInputSchemas } from './site-input'
 import type { SiteModule } from './sites'
 
@@ -9,9 +9,11 @@ async function result(operation: () => Promise<Record<string, unknown>>, summary
   try {
     return { structuredContent: await operation(), content: [{ type: 'text', text: summary }] }
   } catch (cause) {
-    const error = isDomainError(cause) ? cause : new DomainError('STORAGE_UNAVAILABLE', 'The operation could not be completed')
+    const error = isDomainError(cause) ? cause : new DomainError('STORAGE_UNAVAILABLE', 'The operation could not be completed', undefined, { cause })
+    const requestId = crypto.randomUUID()
+    logFailure('tool_failed', cause, { requestId })
     return { isError: true, structuredContent: { error: { code: error.code, message: error.message, retryable: error.retryable,
-      requestId: crypto.randomUUID(), ...(error.details ? { details: error.details } : {}) } },
+      requestId, ...(error.details ? { details: error.details } : {}) } },
     content: [{ type: 'text', text: `${error.code}: ${error.message}` }] }
   }
 }

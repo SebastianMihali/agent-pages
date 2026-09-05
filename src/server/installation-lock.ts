@@ -1,19 +1,20 @@
 import { mkdir, open } from 'node:fs/promises'
 import { join } from 'node:path'
-import { flock } from 'fs-ext'
+import { flockSync } from 'fs-ext'
 
 export interface InstallationLock { release(): Promise<void> }
 
-const lock = (descriptor: number, operation: 'exnb' | 'un') => new Promise<void>((resolve, reject) => {
-  flock(descriptor, operation, (error) => { if (error) reject(error); else resolve() })
-})
+// Non-blocking flock returns immediately, so the synchronous call costs nothing.
+// The asynchronous variant completes on the libuv threadpool through a Nan
+// callback that crashes the process under Vite's development server.
+const lock = (descriptor: number, operation: 'exnb' | 'un') => { flockSync(descriptor, operation) }
 
 export async function acquireInstallationLock(dataDir: string): Promise<InstallationLock> {
   await mkdir(dataDir, { recursive: true, mode: 0o700 })
   const handle = await open(join(dataDir, '.agent-pages.lock'), 'a+', 0o600)
   try {
     await handle.chmod(0o600)
-    await lock(handle.fd, 'exnb')
+    lock(handle.fd, 'exnb')
   } catch (error) {
     await handle.close()
     const code = (error as NodeJS.ErrnoException).code
@@ -26,7 +27,7 @@ export async function acquireInstallationLock(dataDir: string): Promise<Installa
   return { async release() {
     if (released) return
     released = true
-    try { await lock(handle.fd, 'un') }
+    try { lock(handle.fd, 'un') }
     finally { await handle.close() }
   } }
 }

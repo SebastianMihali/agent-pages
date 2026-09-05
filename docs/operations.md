@@ -152,4 +152,6 @@ Expiration denies reads by time comparison before physical cleanup. Explicit del
 
 At startup, Agent Pages removes abandoned staging, reconciles retired and orphaned revisions, resumes tombstones, and verifies active revision metadata. A missing or corrupt active revision fails readiness instead of publishing an empty site. Preserve the volume for diagnosis and restore a known-good cold backup; do not manually point metadata at another revision.
 
+Expected outcomes such as conflicts, denials and limits are not logged. Storage failures and unexpected errors are written to stderr as one JSON line per event (`request_failed`, `tool_failed`, `content_request_failed`, `cleanup_failed`) with the error code, the request ID returned to the client where one exists, and the underlying cause's name, message and system error code. Clients never receive the cause. Use the request ID to correlate a client-reported failure with its log line.
+
 Monitor filesystem free space as well as application quota errors. SQLite, logs, manifests, and filesystem allocation overhead consume space beyond accounted site bytes. `QUOTA_EXCEEDED` requires freeing capacity or changing coherent limits; `STORAGE_UNAVAILABLE` and `BUSY` should be retried with the same operation ID after the underlying condition clears.

@@ -1,6 +1,6 @@
 # Agent Pages — Product direction
 
-Updated: 2026-09-05. Status: implementation preparation; no application is implemented yet.
+Updated: 2026-09-05. Status: the single-owner MVP is implemented and locally verified; deployment through the intended proxy is deferred until domains and a target are chosen.
 
 ## Purpose
 

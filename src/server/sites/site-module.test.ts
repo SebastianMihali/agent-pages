@@ -295,6 +295,22 @@ describe('complete site revisions', () => {
     await module.close(); reopened.close()
   })
 
+  it('serves a retained revision manifest from memory and forgets it once reclaimed', async () => {
+    const { dataDir, sql, sites, owner } = await fixture()
+    const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Cached', files: [{ path: 'index.html', content: 'old' }, { path: 'a.css', content: 'a{}' }] })
+    const first = await sites.listFiles(owner, { siteId: created.site.id })
+    // The revision is immutable while retained, so later reads must not depend on disk.
+    await rm(join(dataDir, 'sites', created.site.id, 'revisions', created.site.revisionId, 'manifest.json'))
+    expect(await sites.listFiles(owner, { siteId: created.site.id, revisionId: created.site.revisionId })).toEqual(first)
+    const lease = await sites.acquireActiveRevision(created.site.id)
+    expect(lease.manifest).toEqual(first.files)
+    await lease.release()
+    await sites.writeFiles(owner, { operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, files: [{ path: 'index.html', content: 'new' }] })
+    expect(await sites.runCleanup()).toEqual({ removedRevisions: 1, removedSites: 0 })
+    await expect(sites.listFiles(owner, { siteId: created.site.id, revisionId: created.site.revisionId })).rejects.toMatchObject({ code: 'REVISION_UNAVAILABLE' })
+    await sites.close(); sql.close()
+  })
+
   it('serializes competing versions and tombstones before cleanup', async () => {
     const { sites, sql, owner } = await fixture()
     const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Race', files: [{ path: 'index.html', content: 'one' }] })

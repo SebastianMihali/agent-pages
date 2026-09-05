@@ -5,6 +5,7 @@ import { createAuth } from './auth'
 import { createSiteModule } from './sites'
 import { createAccess } from './access'
 import { createAdmission } from './admission'
+import { logFailure } from './errors'
 
 // Nitro bootstrap and TanStack SSR are separate bundles in the same process.
 // They must share the single volume lock, database and shutdown lifecycle.
@@ -30,7 +31,7 @@ async function initialize() {
         auth.sweepExpired()
         access.sweepExpired()
         await sites.runCleanup()
-      })().catch(() => { console.error(JSON.stringify({ event: 'cleanup_failed' })) })
+      })().catch((error: unknown) => { logFailure('cleanup_failed', error) })
         .finally(() => { cleanup = undefined })
     }, 60_000)
     timer.unref()

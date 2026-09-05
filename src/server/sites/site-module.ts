@@ -233,7 +233,17 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     updatedAt: iso(row.updated_at_ms), expiresAt: row.expires_at_ms === null ? null : iso(row.expires_at_ms), sizeBytes: row.size_bytes, fileCount: row.file_count,
   })
   const revisionPath = (siteId: string, revisionId: string) => join(sitesRoot, siteId, 'revisions', revisionId)
-  const readManifest = async (siteId: string, revisionId: string): Promise<StoredManifest> => {
+  // Revisions are immutable, so a validated manifest stays correct until the
+  // revision is reclaimed. Every content request needs one; reading and
+  // revalidating it from disk per request was the serving hot path.
+  const manifestCache = new Map<string, StoredManifest>()
+  const manifestCacheLimit = 64
+  const manifestKey = (siteId: string, revisionId: string) => `${siteId}:${revisionId}`
+  const forgetManifests = (siteId: string, revisionId?: string) => {
+    if (revisionId !== undefined) { manifestCache.delete(manifestKey(siteId, revisionId)); return }
+    for (const key of manifestCache.keys()) if (key.startsWith(`${siteId}:`)) manifestCache.delete(key)
+  }
+  const loadManifest = async (siteId: string, revisionId: string): Promise<StoredManifest> => {
     try {
       const parsed = JSON.parse(await readFile(join(revisionPath(siteId, revisionId), 'manifest.json'), 'utf8')) as StoredManifest
       if (parsed.revisionId !== revisionId || !Array.isArray(parsed.files)) throw new Error('bad manifest')
@@ -245,6 +255,14 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       if (parsed.files.some((entry, index) => index > 0 && comparePaths(parsed.files[index - 1]!.path, entry.path) >= 0)) throw new Error('manifest is not canonically sorted')
       return parsed
     } catch (error) { throw new DomainError('STORAGE_UNAVAILABLE', 'A site revision is unavailable', undefined, { cause: error }) }
+  }
+  const readManifest = async (siteId: string, revisionId: string): Promise<StoredManifest> => {
+    const cached = manifestCache.get(manifestKey(siteId, revisionId))
+    if (cached) return cached
+    const parsed = await loadManifest(siteId, revisionId)
+    manifestCache.set(manifestKey(siteId, revisionId), parsed)
+    if (manifestCache.size > manifestCacheLimit) manifestCache.delete(manifestCache.keys().next().value!)
+    return parsed
   }
   const receipt = (ownerId: string, operationId: string, fingerprint: string) => {
     const row = sql.prepare('SELECT fingerprint_sha256,result_json FROM site_operation_receipts WHERE owner_id=? AND operation_id=?').get(ownerId, operationId) as ReceiptRow | undefined
@@ -644,14 +662,22 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     } finally { await releaseReceipt() }
   })
 
-  const acquireRevision = async (row: SiteRow, revisionId: string): Promise<RevisionLease> => {
-    const exists = sql.prepare('SELECT 1 FROM site_revisions WHERE site_id=? AND id=?').get(row.id, revisionId)
-    if (!exists) throw new DomainError('REVISION_UNAVAILABLE', 'Revision is no longer retained')
-    const manifest = await readManifest(row.id, revisionId)
-    const key = `${row.id}:${revisionId}`
-    leases.set(key, (leases.get(key) ?? 0) + 1)
+  // The lease is taken under the revision gate so cleanup cannot reclaim the
+  // revision; the manifest is then read outside the gate, off the serving hot path.
+  const acquireRevision = async (select: () => Readonly<{ row: SiteRow; revisionId: string }>): Promise<RevisionLease> => {
+    const { row, revisionId, key } = await revisionGate.run(async () => {
+      const selected = select()
+      const exists = sql.prepare('SELECT 1 FROM site_revisions WHERE site_id=? AND id=?').get(selected.row.id, selected.revisionId)
+      if (!exists) throw new DomainError('REVISION_UNAVAILABLE', 'Revision is no longer retained')
+      const key = `${selected.row.id}:${selected.revisionId}`
+      leases.set(key, (leases.get(key) ?? 0) + 1)
+      return { ...selected, key }
+    })
     let released = false
     const release = async () => revisionGate.run(async () => { if (!released) { released = true; const count = (leases.get(key) ?? 1) - 1; if (count) leases.set(key, count); else leases.delete(key) } })
+    let manifest: StoredManifest
+    try { manifest = await readManifest(row.id, revisionId) }
+    catch (error) { await release(); throw error }
     return {
       site: { id: row.id, ownerId: row.owner_id, visibility: row.visibility, visibilityGeneration: row.visibility_generation, expiresAt: row.expires_at_ms === null ? null : new Date(row.expires_at_ms) },
       revisionId, manifest: manifest.files, release,
@@ -696,14 +722,14 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     const retired = sql.prepare("SELECT r.site_id,r.id,r.cleanup_attempts FROM site_revisions r JOIN sites s ON s.id=r.site_id WHERE r.cleanup_after_ms<=? AND r.id<>s.active_revision_id AND s.lifecycle='active' LIMIT 100").all(timestamp) as Array<{ site_id: string; id: string; cleanup_attempts: number }>
     for (const item of retired) {
       if (leases.has(`${item.site_id}:${item.id}`)) continue
-      try { await rm(revisionPath(item.site_id, item.id), { recursive: true, force: true }); sql.prepare('DELETE FROM site_revisions WHERE site_id=? AND id=?').run(item.site_id, item.id); removedRevisions += 1 }
+      try { await rm(revisionPath(item.site_id, item.id), { recursive: true, force: true }); sql.prepare('DELETE FROM site_revisions WHERE site_id=? AND id=?').run(item.site_id, item.id); forgetManifests(item.site_id, item.id); removedRevisions += 1 }
       catch { const backoff = Math.min(3_600_000, 1000 * 2 ** Math.min(item.cleanup_attempts, 12)); sql.prepare("UPDATE site_revisions SET cleanup_attempts=cleanup_attempts+1,cleanup_after_ms=?,cleanup_error_category='filesystem' WHERE site_id=? AND id=?").run(timestamp + backoff, item.site_id, item.id) }
     }
     const tombstones = sql.prepare("SELECT id,active_revision_id,cleanup_attempts FROM sites WHERE lifecycle='tombstoned' AND cleanup_after_ms<=? LIMIT 100").all(timestamp) as Array<{ id: string; active_revision_id: string; cleanup_attempts: number }>
     for (const item of tombstones) {
       const hasLease = [...leases.keys()].some((key) => key.startsWith(`${item.id}:`))
       if (hasLease) continue
-      try { await rm(join(sitesRoot, item.id), { recursive: true, force: true }); sql.prepare('DELETE FROM sites WHERE id=?').run(item.id); removedSites += 1 }
+      try { await rm(join(sitesRoot, item.id), { recursive: true, force: true }); sql.prepare('DELETE FROM sites WHERE id=?').run(item.id); forgetManifests(item.id); removedSites += 1 }
       catch { const backoff = Math.min(3_600_000, 1000 * 2 ** Math.min(item.cleanup_attempts, 12)); sql.prepare("UPDATE sites SET cleanup_attempts=cleanup_attempts+1,cleanup_after_ms=?,cleanup_error_category='filesystem' WHERE id=?").run(timestamp + backoff, item.id) }
     }
     return { removedRevisions, removedSites }
@@ -759,9 +785,9 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     deleteFiles: (principal, command) => changeFiles('delete-files', principal, { ...command, paths: command.paths }),
     setVisibility, deleteSite,
     async listFiles(principal, query) {
-      const lease = await revisionGate.run(() => {
+      const lease = await acquireRevision(() => {
         const row = siteRow(principal.ownerId, query.siteId)
-        return acquireRevision(row, query.revisionId ?? row.active_revision_id)
+        return { row, revisionId: query.revisionId ?? row.active_revision_id }
       })
       try {
         await options.fault?.('after-list-lease')
@@ -777,17 +803,17 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       } finally { await lease.release() }
     },
     async openOwnedFile(principal, query) {
-      const lease = await revisionGate.run(() => {
+      const lease = await acquireRevision(() => {
         const row = siteRow(principal.ownerId, query.siteId)
-        return acquireRevision(row, query.revisionId ?? row.active_revision_id)
+        return { row, revisionId: query.revisionId ?? row.active_revision_id }
       })
       return lease.open(query.path)
     },
     async acquireActiveRevision(siteId, at = new Date(now())) {
-      return revisionGate.run(async () => {
+      return acquireRevision(() => {
         const row = sql.prepare("SELECT * FROM sites WHERE id=? AND lifecycle='active'").get(siteId) as SiteRow | undefined
         if (!row || (row.expires_at_ms !== null && row.expires_at_ms <= at.getTime())) throw new DomainError('NOT_FOUND', 'Site not found')
-        return acquireRevision(row, row.active_revision_id)
+        return { row, revisionId: row.active_revision_id }
       })
     },
     recover, runCleanup,

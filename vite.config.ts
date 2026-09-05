@@ -5,6 +5,11 @@ import { nitro } from 'nitro/vite'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
+  // Runtime configuration reaches the process through `node --env-file` in
+  // development and the platform in production. Vite must not read `.env`
+  // itself: its NODE_ENV=development would compile a production build with
+  // the development JSX runtime, which fails at SSR time.
+  envDir: false,
   ssr: { external: ['fs-ext', 'better-sqlite3'] },
   plugins: [
     tanstackStart(),
