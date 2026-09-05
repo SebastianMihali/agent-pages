@@ -51,16 +51,28 @@ Claude Code documents environment expansion in HTTP headers. Confirm the variabl
 The commands below ran successfully on 2026-09-05 with Node 24.16.0 and MCP TypeScript SDK 1.30.0:
 
 ```sh
-pnpm exec tsx scripts/mcp-client-smoke.ts codex
-pnpm exec tsx scripts/mcp-client-smoke.ts claude
+pnpm exec tsx scripts/mcp-client-smoke.ts both
 ```
 
 | Client | Version | Fixture site ID | Result |
 | --- | --- | --- | --- |
-| Codex CLI | 0.153.4 | `4db0acc59e83d792d92682ba3c1b04eb` | Passed, process exit 0 |
-| Claude Code | 2.1.261 | `733d1c6054483389657fc99881541c8e` | Passed, process exit 0 |
+| Codex CLI | 0.153.4 | `039fb0fae999e707a2d343d2badde838` | Lifecycle, reconnect and credential cases passed |
+| Claude Code | 2.1.261 | `bc52ec5ef8ccabb1cd6c560063c4ecaa` | Lifecycle, reconnect and credential cases passed |
 
 Each client discovered tools and made these real HTTP MCP calls: `create_site`, `read_file`, `write_files`, an exact replay of `write_files`, another `read_file`, two `set_site_visibility` calls, `get_site`, and `list_files`. The server observed creation as private/version 1, update and replay as version 2, public as version 3, and private again as version 4. Each final site retained three files and its updated index content. Content-handler probes returned anonymous 404 for private state, 200 for public state, then 404 after returning to private. After each client exited, the harness revoked its key and confirmed the next HTTP MCP discovery request returned 401.
+
+A second actual process invocation of each client reused its fixture site ID and key, initialized a new MCP connection, then successfully called `get_site` and `read_file`. Both saw the existing private/version-4 site and its updated file, with no creation or mutation calls.
+
+The harness also launched each real client with `AGENT_PAGES_API_KEY` removed from its environment and then with an invalid value. No authenticated tool calls occurred and the stored site state remained unchanged in all four cases:
+
+| Client case | Observed behavior |
+| --- | --- |
+| Codex, missing variable | No HTTP MCP request; client reported unavailable MCP tools. |
+| Codex, invalid key | Two HTTP 401 handshake requests; client reported unavailable MCP tools. |
+| Claude Code, missing variable | Two HTTP 401 handshake requests; client reported unavailable server/credentials. It did not stop with a configuration-expansion error. |
+| Claude Code, invalid key | Two HTTP 401 handshake requests; client reported unavailable MCP tools. |
+
+All four negative client invocations exited with code 0 while reporting the MCP failure in their final answer. The harness checks server requests, authenticated tool calls and unchanged site state; CLI exit status alone does not establish a successful MCP connection. Revocation remains a direct HTTP probe after the actual client invocations, and anonymous visibility probes run through the content handler rather than an external browser.
 
 The harness independently checks the stored site state rather than trusting a client's final answer. It creates a temporary data directory, deletes its own fixtures, revokes keys, closes its own server and removes temporary configuration. API keys are generated in memory and passed through `AGENT_PAGES_API_KEY`; configuration files contain only the variable reference. Normal output records tool names, site IDs, versions and statuses, never authorization headers or complete request bodies. No global client configuration was changed.
 
@@ -70,7 +82,7 @@ Strict Zod input schemas are advertised through the SDK. Domain failures return 
 
 ## Remaining deployment verification
 
-The live fixture does not establish production deployment acceptance. In [ticket 07](../.scratch/mvp/issues/07-release-verification.md), separately verify the production bundle through the intended HTTPS proxy, browser owner handoff, client reconnection, and missing-environment-variable behavior:
+The live fixture does not establish production deployment acceptance. In [ticket 07](../.scratch/mvp/issues/07-release-verification.md), separately verify the production bundle through the intended HTTPS proxy and browser owner handoff, and repeat the client workflow against that deployment:
 
 1. Initialize, discover the expected tools and create a private multipage fixture.
 2. Confirm anonymous access is denied; open the site as its signed-in owner.
@@ -79,4 +91,4 @@ The live fixture does not establish production deployment acceptance. In [ticket
 5. Explicitly make the fixture public, confirm anonymous access, then make it private and confirm denial.
 6. Revoke the key and confirm the next request fails. Delete only fixtures created for the verification.
 
-Inspect missing-variable and invalid-token failures as well as the happy path. SDK integration tests are necessary but do not replace these client workflows. OAuth and other MCP clients are not claimed as supported by this MVP.
+SDK integration tests are necessary but do not replace these client workflows. OAuth and other MCP clients are not claimed as supported by this MVP.

@@ -32,6 +32,8 @@ const runtime = spawn(process.execPath, ['.output/server/index.mjs'], {
     ADMIN_PASSWORD_HASH: 'scrypt$131072$8$1$01010101010101010101010101010101$8e42ace0fdaa6233ab07d1ace292170ded23f47cc4d1034fa021207f1e8467f8',
     PORT: String(runtimePort),
     MIN_FREE_DISK_MB: '1',
+    // Both engine projects exercise many mutations in one isolated installation.
+    MAX_MUTATIONS_PER_MINUTE: '1000',
   },
   stdio: 'inherit',
 })

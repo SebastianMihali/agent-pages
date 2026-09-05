@@ -47,7 +47,7 @@ const route = createHostHandler(config, { ready: () => true, content,
       if (message.method === 'tools/call') {
         const reply = await response.clone().json()
         const structured = reply.result?.structuredContent
-        const site = structured?.site ?? (message.params?.name === 'get_site' ? structured : undefined)
+        const site = structured?.site ?? (message.params?.name === 'get_site' && typeof structured?.id === 'string' ? structured : undefined)
         if (site) {
           entry.siteId = site.id; entry.version = site.version; entry.visibility = site.visibility
           entry.anonymousStatus = (await content(new Request(`${siteOrigin(config, site.id)}/index.html`), site.id)).status
@@ -101,6 +101,18 @@ function runClient(command: string, args: string[], cwd: string, key: string | u
     child.on('error', (error) => { clearTimeout(timer); clearTimeout(forceStop); reject(error) })
     child.on('close', (code) => { clearTimeout(timer); clearTimeout(forceStop); resolve({ code, output: output.replace(/agp_[A-Za-z0-9_-]{43}/g, '[REDACTED]') }) })
   })
+}
+
+function clientMessage(output: string): string {
+  let message: string | undefined
+  for (const line of output.split('\n')) {
+    try {
+      const event = JSON.parse(line)
+      if (typeof event.result === 'string') message = event.result
+      else if (event.item?.type === 'agent_message' && typeof event.item.text === 'string') message = event.item.text
+    } catch { /* Non-JSON startup diagnostics are retained only when no client answer exists. */ }
+  }
+  return message ?? output.trim().split('\n').slice(-6).join('\n')
 }
 
 try {
@@ -171,7 +183,7 @@ Return concise JSON containing siteId, url, finalVersion and success, with no cr
       credentialCases.push({ kind, passed: casePassed })
       console.log(JSON.stringify({ event: 'client_credential_case_result', client, kind, passed: casePassed, exitCode: rejected.code,
         authenticatedToolCalls: evidence.filter((entry) => entry.tool).length, unauthorizedHttpRequests: evidence.filter((entry) => entry.status === 401).length,
-        stateUnchanged: unchanged, diagnosticExcerpt: rejected.output.slice(-2200) }))
+        stateUnchanged: unchanged, diagnosticExcerpt: clientMessage(rejected.output).slice(-2200) }))
     }
     auth.revokeKey(owner, credential.id)
     const revoked = await fetch(endpoint, { method: 'POST', headers: { authorization: `Bearer ${credential.key}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },

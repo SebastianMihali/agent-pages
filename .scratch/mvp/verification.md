@@ -4,7 +4,7 @@ Date: 2026-09-05. Remote Coolify deployment is intentionally deferred by the own
 
 ## Automated application checks
 
-`pnpm lint`, `pnpm typecheck` and `pnpm test` passed: **75 tests in 14 files**, no skipped fixtures. Tests use isolated temporary SQLite databases and file trees.
+`pnpm lint`, `pnpm typecheck` and `pnpm test` passed: **87 tests in 17 files**, no skipped fixtures. Tests use isolated temporary SQLite databases and file trees.
 
 Coverage includes production configuration validation; exact host dispatch; bounded JSON and request admission; owner/session/CSRF/key isolation; ticket expiry/replay/site binding; replacement and revocation of grants; content routing/MIME/HEAD; all REST/MCP domain operations; multipart limits/order/trailer validation; cross-transport receipts; competing versions; staging reservations; visibility/lifecycle races; expiry; cleanup retries; and process crash/restart.
 
@@ -24,13 +24,15 @@ Production integration fixes retained in the implementation include native `.nod
 
 Codex CLI 0.153.4 and Claude Code 2.1.261 both completed real HTTP MCP create/read/update/replay/public/private workflows using the installed authenticated clients. Fixture state and anonymous/private/public responses were independently checked. API keys were revoked and subsequent MCP discovery returned 401.
 
-See [client evidence and invocation isolation](../../docs/mcp-clients.md). These CLI workflows use source application handlers on loopback HTTP; production HTTPS transport is checked separately by the browser/integration suite. No global client configuration was changed.
+See [client evidence and invocation isolation](../../docs/mcp-clients.md). These CLI workflows use source application handlers on loopback HTTP; production HTTPS transport is checked separately by the browser/integration suite. Second actual client processes reconnected to the same private site; missing and invalid bearer variables caused no authenticated calls or state changes. Both CLIs may exit zero while reporting unavailable MCP tools, so the harness verifies server events/state independently. No global client configuration was changed.
 
 ## Container and restore
 
 Linux arm64 Docker builds compiled and traced native SQLite and flock dependencies. The runtime user is `node` (UID 1000), with a writable persistent volume. A competing same-volume container failed startup. Clean restart revoked old browser sessions and retained owner identity, API keys, visibility and site content.
 
-A cold archive restored to a fresh volume, accepted owner login and the retained key, denied anonymous private content and accepted a versioned update at the same site ID. All temporary containers, volumes and credentials used for this workflow were removed. Docker Compose configuration/start/readiness/stop were also checked in an isolated project. A separate actual-container check proves `env_file.format: raw` preserves all scrypt dollar signs; Compose 5.1.4 was used.
+A cold archive restored to a fresh volume, accepted owner login and the retained key, denied anonymous private content and accepted a versioned update at the same site ID. All temporary containers, volumes and credentials used for this workflow were removed. Docker Compose configuration/start/readiness/stop were also checked in an isolated project. Security audit events now cover login decisions, key creation/revocation, visibility and deletion with allowlisted identifiers only.
+
+A separate actual-container check proves `env_file.format: raw` preserves all scrypt dollar signs; Compose 5.1.4 was used.
 
 The local image `agent-pages:mvp-local` built successfully (Linux arm64, non-root). Its smoke verified readiness, SSR, anonymous management 401, unknown/content host isolation 404 and missing-configuration exit before serving. Image identity will be refreshed after review if code changes. Wildcard DNS, public certificate issuance and the actual Coolify proxy remain deployment checks, as explicitly requested by the owner.
 

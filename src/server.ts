@@ -10,7 +10,7 @@ import { createSitesWebHandler } from './server/web-sites'
 import { createContentHandler } from './server/content'
 import { createApiHandler } from './server/api'
 import { registerSiteTools } from './server/mcp-tools'
-import { errorResponse, requireOrigin } from './server/errors'
+import { errorResponse, requireOrigin, type Principal } from './server/errors'
 import { cookieNames, readCookie } from './server/web-auth'
 
 let dispatch: ReturnType<typeof createHostHandler> | undefined
@@ -37,13 +37,14 @@ export default createServerEntry({
           const path = new URL(incoming.url).pathname
           if (path === '/mcp' || path.startsWith('/api/') || path.startsWith('/web/') || path.startsWith('/sites/')) {
             try {
-              if (path === '/mcp' || path.startsWith('/api/')) auth.readBearer(incoming)
+              let principal: Principal | undefined
+              if (path === '/mcp' || path.startsWith('/api/')) principal = auth.readBearer(incoming)
               else if (incoming.method !== 'GET') {
                 requireOrigin(incoming, config.appOrigin)
                 if (path !== '/web/login') auth.requireSession(readCookie(incoming, cookieNames(config).session))
               }
-              const owned = await admit(async () => path === '/mcp' ? mcp(incoming) :
-                await webAuth(incoming) ?? await webSites(incoming) ?? await api(incoming))
+              const owned = await admit(async () => path === '/mcp' ? mcp(incoming, principal) :
+                await webAuth(incoming) ?? await webSites(incoming) ?? await api(incoming, principal))
               if (owned) return owned
             } catch (error) { return errorResponse(error) }
           }

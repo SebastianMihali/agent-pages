@@ -10,6 +10,7 @@ import type { AppConfig } from '../config'
 import type { AppDatabase } from '../db'
 import { DomainError, isDomainError, type Principal } from '../errors'
 import { siteOrigin } from '../hosts'
+import { audit } from '../audit'
 import type {
   CreateResult, DeleteResult, FileInput, FileMutationResult, ManifestEntry, RevisionLease,
   SiteModule, SiteModuleOptions, SiteView, VisibilityResult,
@@ -142,6 +143,20 @@ function validateTree(paths: readonly string[]) {
 }
 
 function stableFingerprint(value: unknown) { return createHash('sha256').update(JSON.stringify(value)).digest('hex') }
+function digestPairs(entries: readonly Readonly<{ path: string; digest: string }>[]) {
+  return entries.map((entry) => [entry.path, entry.digest] as const).sort((left, right) => comparePaths(left[0], right[0]))
+}
+function textManifestEntries(files: readonly FileInput[]) {
+  if (!files.every((file) => 'content' in file)) return undefined
+  const entries = files.map((file) => ({
+    path: canonicalPath(file.path),
+    sizeBytes: Buffer.byteLength(file.content, 'utf8'),
+    contentType: mimeTypeFor(file.path),
+    digest: createHash('sha256').update(file.content, 'utf8').digest('hex'),
+  }))
+  validateTree(entries.map((entry) => entry.path))
+  return entries.sort((left, right) => comparePaths(left.path, right.path))
+}
 function iso(milliseconds: number) { return new Date(milliseconds).toISOString() }
 function parseCursor(value: string | undefined): unknown {
   if (!value) return undefined
@@ -162,10 +177,15 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
   const quotaGate = new Mutex()
   const shutdown = new AbortController()
   const leases = new Map<string, number>()
+  const abandonedStaging = new Map<string, () => Promise<void>>()
   let reservedActiveBytes = 0
   let reservedStoredBytes = 0
   let reservedSites = 0
   let reservedReceipts = 0
+  // This installation has one owner. A shared budget covers all their keys,
+  // sessions and transports without growing a map from caller-supplied IDs.
+  let mutationWindowEnd = now() + 60_000
+  let mutationAttempts = 0
   const withKeyLock = async <T>(map: Map<string, LockEntry>, key: string, work: () => Promise<T>) => {
     let entry = map.get(key)
     if (!entry) { entry = { mutex: new Mutex(), users: 0 }; map.set(key, entry) }
@@ -177,6 +197,16 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
   const stagingRoot = join(config.dataDir, 'staging')
   await mkdir(sitesRoot, { recursive: true, mode: 0o700 })
   await mkdir(stagingRoot, { recursive: true, mode: 0o700 })
+
+  const discardStaging = async (root: string, releaseReservation: () => Promise<void>) => {
+    try { await rm(root, { recursive: true, force: true }); abandonedStaging.delete(root) }
+    catch {
+      // Retain conservative byte accounting until the owned files are reclaimed.
+      abandonedStaging.set(root, releaseReservation)
+      return
+    }
+    await releaseReservation()
+  }
 
   const siteRow = (ownerId: string, siteId: string, includeExpired = false) => {
     const row = sql.prepare('SELECT * FROM sites WHERE id=? AND owner_id=?').get(siteId, ownerId) as SiteRow | undefined
@@ -235,6 +265,8 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     sql.prepare('INSERT INTO site_operation_receipts VALUES (?,?,?,?,?,?,?,?)').run(ownerId, operationId, kind, target, fingerprint, JSON.stringify(result), timestamp, timestamp + receiptLifetimeMs)
   }
   const stageInputs = async (files: readonly FileInput[], maximumUploadBytes?: number) => {
+    // A failed cleanup must not grow an unbounded set of unaccounted roots.
+    if (abandonedStaging.size) throw new DomainError('STORAGE_UNAVAILABLE', 'Staging cleanup must finish before accepting another upload')
     if (!files.length || files.length > config.limits.maxBatchFiles) throw new DomainError('INVALID_INPUT', 'File batch must be nonempty and within the configured limit')
     const normalized = files.map((file) => ({ ...file, path: canonicalPath(file.path) }))
     validateTree(normalized.map((file) => file.path))
@@ -249,12 +281,12 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       if (!Number.isSafeInteger(maximumUploadBytes) || maximumUploadBytes < 0) throw new DomainError('INVALID_INPUT', 'maximumUploadBytes is invalid')
       upperBound = Math.min(upperBound, maximumUploadBytes)
     }
-    const releaseInputReservation = await reserveQuota(0, 0, upperBound, false)
     const root = join(stagingRoot, opaqueId())
-    await mkdir(join(root, 'uploads'), { recursive: true, mode: 0o700 })
     const entries: Array<ManifestEntry & { stagedPath: string }> = []
     let batchSize = 0
+    const releaseInputReservation = await reserveQuota(0, 0, upperBound, false)
     try {
+      await mkdir(join(root, 'uploads'), { recursive: true, mode: 0o700 })
       for (const file of normalized) {
         const destination = join(root, 'uploads', file.path)
         await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
@@ -293,7 +325,10 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
         entries.push({ path: file.path, sizeBytes: size, contentType: mimeTypeFor(file.path), digest: hash.digest('hex'), stagedPath: destination })
       }
       return { root, entries, releaseInputReservation }
-    } catch (error) { await rm(root, { recursive: true, force: true }); await releaseInputReservation(); throw error }
+    } catch (error) {
+      await discardStaging(root, releaseInputReservation)
+      throw error
+    }
   }
   const writeRevision = async (siteId: string, revisionId: string, staging: Awaited<ReturnType<typeof stageInputs>> | null, manifest: ManifestEntry[], previous?: StoredManifest) => {
     const stagingContainer = staging?.root ?? join(stagingRoot, opaqueId())
@@ -372,8 +407,11 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       released = true; reservedActiveBytes -= activeIncrease; reservedStoredBytes -= storedBytes; if (creating) reservedSites -= 1
     })
   })
-  const mutation = <T>(principal: Principal, operationId: string, siteId: string | undefined, work: () => Promise<T>) => {
+  const mutation = async <T>(principal: Principal, operationId: string, siteId: string | undefined, work: () => Promise<T>) => {
     validateOperation(operationId)
+    if (now() >= mutationWindowEnd) { mutationWindowEnd = now() + 60_000; mutationAttempts = 0 }
+    if (mutationAttempts >= config.limits.maxMutationsPerMinute) throw new DomainError('RATE_LIMITED', 'Site mutation limit reached; retry after the current minute')
+    mutationAttempts++
     return gate.run(() => withKeyLock(operationLocks, `${principal.ownerId}:${operationId}`, () => siteId ? withKeyLock(locks, siteId, work) : work()))
       .catch((error: unknown) => {
         if (isDomainError(error)) throw error
@@ -386,12 +424,18 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     if (!name || name.length > 100) throw new DomainError('INVALID_INPUT', 'Site name must contain 1 to 100 characters')
     const expires = command.expiresInSeconds ?? null
     if (expires !== null && (!Number.isInteger(expires) || expires < 60 || expires > 2_592_000)) throw new DomainError('INVALID_INPUT', 'Expiration must be between 60 and 2592000 seconds')
+    const immediateEntries = textManifestEntries(command.files)
+    if (immediateEntries) {
+      const immediateFingerprint = stableFingerprint({ kind: 'create', name, expires, files: digestPairs(immediateEntries) })
+      const existing = receipt(principal.ownerId, command.operationId, immediateFingerprint) as CreateResult | undefined
+      if (existing) return existing
+    }
     const staged = await stageInputs(command.files, command.maximumUploadBytes)
     try {
       const sorted = staged.entries.map((entry) => ({ path: entry.path, sizeBytes: entry.sizeBytes, contentType: entry.contentType, digest: entry.digest })).sort((a, b) => comparePaths(a.path, b.path))
       validateTree(sorted.map((entry) => entry.path))
       if (!sorted.some((entry) => entry.path === 'index.html')) throw new DomainError('INVALID_INPUT', 'A site must contain index.html')
-      const fingerprint = stableFingerprint({ kind: 'create', name, expires, files: sorted.map((entry) => [entry.path, entry.digest]) })
+      const fingerprint = stableFingerprint({ kind: 'create', name, expires, files: digestPairs(sorted) })
       const existing = receipt(principal.ownerId, command.operationId, fingerprint) as CreateResult | undefined
       if (existing) return existing
       const releaseReceipt = await admitReceipt()
@@ -424,24 +468,53 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       return result
       } finally { await releaseQuota() }
       } finally { await releaseReceipt() }
-    } finally { await rm(staged.root, { recursive: true, force: true }); await staged.releaseInputReservation() }
+    } finally { await discardStaging(staged.root, staged.releaseInputReservation) }
   })
 
   const changeFiles = (kind: 'write' | 'delete-files', principal: Principal, command: { operationId: string; siteId: string; expectedVersion: number; files?: readonly FileInput[]; paths?: readonly string[]; maximumUploadBytes?: number }): Promise<FileMutationResult> =>
     mutation(principal, command.operationId, command.siteId, async () => {
       const priorReceipt = receiptHeader(principal.ownerId, command.operationId)
       if (priorReceipt && (priorReceipt.kind !== kind || priorReceipt.target_site_id !== command.siteId)) throw new DomainError('IDEMPOTENCY_CONFLICT', 'Operation ID was already used with different input')
+      const immediateEntries = command.files ? textManifestEntries(command.files) : undefined
+      const immediateFingerprint = immediateEntries
+        ? stableFingerprint({ kind, siteId: command.siteId, expectedVersion: command.expectedVersion, files: digestPairs(immediateEntries) })
+        : undefined
+      if (immediateFingerprint) {
+        const existing = receipt(principal.ownerId, command.operationId, immediateFingerprint) as FileMutationResult | undefined
+        if (existing) return existing
+      }
       let authorizedRow: SiteRow | undefined
       if (!priorReceipt) {
         authorizedRow = siteRow(principal.ownerId, command.siteId)
         if (authorizedRow.version !== command.expectedVersion) throw new DomainError('VERSION_CONFLICT', 'Site version does not match', { currentVersion: authorizedRow.version })
+      }
+      if (immediateEntries && authorizedRow) {
+        if (!immediateEntries.length || immediateEntries.length > config.limits.maxBatchFiles) throw new DomainError('INVALID_INPUT', 'File batch must be nonempty and within the configured limit')
+        if (immediateEntries.some((entry) => entry.sizeBytes > config.limits.maxFileBytes)) throw new DomainError('PAYLOAD_TOO_LARGE', 'File exceeds the configured limit')
+        const immediateSize = immediateEntries.reduce((sum, entry) => sum + entry.sizeBytes, 0)
+        if (command.maximumUploadBytes !== undefined && (!Number.isSafeInteger(command.maximumUploadBytes) || command.maximumUploadBytes < 0)) throw new DomainError('INVALID_INPUT', 'maximumUploadBytes is invalid')
+        if (command.maximumUploadBytes !== undefined && immediateSize > command.maximumUploadBytes) throw new DomainError('PAYLOAD_TOO_LARGE', 'File batch exceeds its admitted size')
+        const current = await readManifest(authorizedRow.id, authorizedRow.active_revision_id)
+        const currentFiles = new Map(current.files.map((entry) => [entry.path, entry]))
+        if (immediateEntries.every((entry) => currentFiles.get(entry.path)?.digest === entry.digest)) {
+          const releaseReceipt = await admitReceipt()
+          try {
+            const timestamp = now(); const result: FileMutationResult = { site: view(authorizedRow), changedPaths: [], deletedPaths: [],
+              operationId: command.operationId, operationExpiresAt: iso(timestamp + receiptLifetimeMs) }
+            await revisionGate.run(async () => sql.transaction(() => {
+              ensureMutable(principal.ownerId, authorizedRow!.id, command.expectedVersion, timestamp)
+              saveReceipt(principal.ownerId, command.operationId, kind, authorizedRow!.id, immediateFingerprint!, result, timestamp)
+            })())
+            return result
+          } finally { await releaseReceipt() }
+        }
       }
       const staged = command.files ? await stageInputs(command.files, command.maximumUploadBytes) : null
       try {
         const deletes = (command.paths ?? []).map(canonicalPath)
         if (kind === 'delete-files' && (!deletes.length || deletes.length > config.limits.maxBatchFiles)) throw new DomainError('INVALID_INPUT', 'Delete batch must be nonempty and within the configured limit')
         validateTree(deletes)
-        const fileFingerprints = staged?.entries.map((entry) => [entry.path, entry.digest]).sort() ?? deletes.slice().sort()
+        const fileFingerprints = staged ? digestPairs(staged.entries) : deletes.slice().sort(comparePaths)
         const fingerprint = stableFingerprint({ kind, siteId: command.siteId, expectedVersion: command.expectedVersion, files: fileFingerprints })
         const existing = receipt(principal.ownerId, command.operationId, fingerprint) as FileMutationResult | undefined
         if (existing) return existing
@@ -465,8 +538,6 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
         if (!next.has('index.html')) throw new DomainError('INVALID_INPUT', 'A site must retain index.html')
         if (manifest.length > config.limits.maxFilesPerSite) throw new DomainError('QUOTA_EXCEEDED', 'Site file count limit exceeded')
         const total = manifest.reduce((sum, entry) => sum + entry.sizeBytes, 0)
-        const releaseQuota = await reserveQuota(total, row.size_bytes, total, false)
-        try {
         const timestamp = now(); const expiresAt = timestamp + receiptLifetimeMs
         if (row.expires_at_ms !== null && row.expires_at_ms <= timestamp) throw new DomainError('SITE_EXPIRED', 'Site has expired')
         if (!changedPaths.length && !deletedPaths.length) {
@@ -477,6 +548,8 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
           })())
           return result
         }
+        const releaseQuota = await reserveQuota(total, row.size_bytes, total, false)
+        try {
         const revisionId = opaqueId()
         const final = await writeRevision(row.id, revisionId, staged, manifest, previous)
         const commitTimestamp = now()
@@ -501,7 +574,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
         return result
         } finally { await releaseQuota() }
         } finally { await releaseReceipt() }
-      } finally { if (staged) { await rm(staged.root, { recursive: true, force: true }); await staged.releaseInputReservation() } }
+      } finally { if (staged) await discardStaging(staged.root, staged.releaseInputReservation) }
     })
 
   const setVisibility: SiteModule['setVisibility'] = (principal, command) => mutation(principal, command.operationId, command.siteId, async () => {
@@ -526,6 +599,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       }
       saveReceipt(principal.ownerId, command.operationId, 'visibility', row.id, fingerprint, result, timestamp)
     })())
+    if (changed) audit({ event: 'site_visibility_changed', ownerId: principal.ownerId, siteId: row.id, operationId: command.operationId, visibility: command.visibility })
     return result
     } finally { await releaseReceipt() }
   })
@@ -547,6 +621,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       if (update.changes !== 1) ensureMutable(principal.ownerId, row.id, command.expectedVersion, timestamp, true)
       saveReceipt(principal.ownerId, command.operationId, 'delete-site', row.id, fingerprint, result, timestamp)
     })())
+    audit({ event: 'site_deleted', ownerId: principal.ownerId, siteId: row.id, operationId: command.operationId })
     return result
     } finally { await releaseReceipt() }
   })
@@ -564,7 +639,9 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       revisionId, manifest: manifest.files, release,
       async open(path) {
         if (released) throw new DomainError('REVISION_UNAVAILABLE', 'Revision lease has been released')
-        const canonical = canonicalPath(path)
+        let canonical: string
+        try { canonical = canonicalPath(path) }
+        catch (error) { await release(); throw error }
         const entry = manifest.files.find((item) => item.path === canonical)
         if (!entry) { await release(); throw new DomainError('NOT_FOUND', 'File not found') }
         let fileHandle: Awaited<ReturnType<typeof open>>
@@ -595,6 +672,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
 
   const runCleanup: SiteModule['runCleanup'] = async (at = new Date(now())) => revisionGate.run(async () => {
     const timestamp = at.getTime(); let removedRevisions = 0; let removedSites = 0
+    for (const [root, releaseReservation] of abandonedStaging) await discardStaging(root, releaseReservation)
     sql.prepare("UPDATE sites SET lifecycle='tombstoned',deletion_reason='expired',tombstoned_at_ms=?,cleanup_after_ms=?,version=version+1,visibility_generation=visibility_generation+1,updated_at_ms=? WHERE lifecycle='active' AND expires_at_ms IS NOT NULL AND expires_at_ms<=?")
       .run(timestamp, timestamp, timestamp, timestamp)
     const retired = sql.prepare("SELECT r.site_id,r.id,r.cleanup_attempts FROM site_revisions r JOIN sites s ON s.id=r.site_id WHERE r.cleanup_after_ms<=? AND r.id<>s.active_revision_id AND s.lifecycle='active' LIMIT 100").all(timestamp) as Array<{ site_id: string; id: string; cleanup_attempts: number }>
@@ -615,6 +693,8 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
 
   const recover = async () => {
     await rm(stagingRoot, { recursive: true, force: true }); await mkdir(stagingRoot, { recursive: true, mode: 0o700 })
+    for (const releaseReservation of abandonedStaging.values()) await releaseReservation()
+    abandonedStaging.clear()
     const rows = sql.prepare("SELECT * FROM sites WHERE lifecycle='active'").all() as SiteRow[]
     for (const row of rows) {
       const manifest = await readManifest(row.id, row.active_revision_id)
@@ -663,19 +743,22 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     deleteFiles: (principal, command) => changeFiles('delete-files', principal, { ...command, paths: command.paths }),
     setVisibility, deleteSite,
     async listFiles(principal, query) {
-      const row = siteRow(principal.ownerId, query.siteId)
-      const revisionId = query.revisionId ?? row.active_revision_id
-      if (!sql.prepare('SELECT 1 FROM site_revisions WHERE site_id=? AND id=?').get(row.id, revisionId)) throw new DomainError('REVISION_UNAVAILABLE', 'Revision is no longer retained')
-      const manifest = await readManifest(row.id, revisionId)
-      const requestedLimit = query.limit ?? 100
-      if (!Number.isInteger(requestedLimit) || requestedLimit < 1) throw new DomainError('INVALID_INPUT', 'List limit is invalid')
-      const limit = Math.min(requestedLimit, 100)
-      const cursor = parseCursor(query.cursor) as { ownerId?: string; siteId?: string; revisionId?: string; path?: string } | undefined
-      if (cursor && (cursor.ownerId !== principal.ownerId || cursor.siteId !== row.id || cursor.revisionId !== revisionId || typeof cursor.path !== 'string')) throw new DomainError('INVALID_INPUT', 'Cursor scope is invalid')
-      const found = cursor ? manifest.files.findIndex((file) => file.path > cursor.path!) : 0
-      const start = found < 0 ? manifest.files.length : found
-      const files = manifest.files.slice(start, start + limit); const last = files.at(-1)
-      return { revisionId, files, cursor: start + limit < manifest.files.length && last ? makeCursor({ ownerId: principal.ownerId, siteId: row.id, revisionId, path: last.path }) : null }
+      const lease = await revisionGate.run(() => {
+        const row = siteRow(principal.ownerId, query.siteId)
+        return acquireRevision(row, query.revisionId ?? row.active_revision_id)
+      })
+      try {
+        await options.fault?.('after-list-lease')
+        const requestedLimit = query.limit ?? 100
+        if (!Number.isInteger(requestedLimit) || requestedLimit < 1) throw new DomainError('INVALID_INPUT', 'List limit is invalid')
+        const limit = Math.min(requestedLimit, 100)
+        const cursor = parseCursor(query.cursor) as { ownerId?: string; siteId?: string; revisionId?: string; path?: string } | undefined
+        if (cursor && (cursor.ownerId !== principal.ownerId || cursor.siteId !== query.siteId || cursor.revisionId !== lease.revisionId || typeof cursor.path !== 'string')) throw new DomainError('INVALID_INPUT', 'Cursor scope is invalid')
+        const found = cursor ? lease.manifest.findIndex((file) => file.path > cursor.path!) : 0
+        const start = found < 0 ? lease.manifest.length : found
+        const files = lease.manifest.slice(start, start + limit); const last = files.at(-1)
+        return { revisionId: lease.revisionId, files, cursor: start + limit < lease.manifest.length && last ? makeCursor({ ownerId: principal.ownerId, siteId: query.siteId, revisionId: lease.revisionId, path: last.path }) : null }
+      } finally { await lease.release() }
     },
     async openOwnedFile(principal, query) {
       const lease = await revisionGate.run(() => {

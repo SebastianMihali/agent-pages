@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openDatabase, type AppDatabase } from '../db'
 import { createAuth } from './index'
 
@@ -18,12 +18,14 @@ describe('owner authentication through persistent operations', () => {
   let auth: ReturnType<typeof createAuth>
 
   beforeEach(() => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
     dataDir = mkdtempSync(join(tmpdir(), 'agent-pages-auth-'))
     db = openDatabase(dataDir)
     now = Date.parse('2026-09-05T10:00:00Z')
     auth = createAuth(db, config, { now: () => now })
   })
   afterEach(() => {
+    vi.restoreAllMocks()
     db.close()
     rmSync(dataDir, { recursive: true, force: true })
   })
@@ -33,6 +35,37 @@ describe('owner authentication through persistent operations', () => {
     return auth.login({ username: 'owner', password: 'correct test password',
       challengeToken: challenge.token, csrfToken: challenge.csrfToken, ip: '127.0.0.1' })
   }
+
+  it('audits login adjudication and key changes without submitted fields or credentials', async () => {
+    auth = createAuth(db, config, { now: () => now, maxLoginAttemptsPerMinute: 2 })
+    const signedIn = await login()
+    const owner = { ownerId: auth.ownerId }
+    const key = auth.createKey(owner, 'sensitive key label')
+    auth.revokeKey(owner, key.id)
+    expect(() => auth.revokeKey(owner, key.id)).toThrow()
+    const challenge = auth.createLoginChallenge()
+    const rejected = { username: 'sensitive username', password: 'sensitive wrong password',
+      challengeToken: challenge.token, csrfToken: challenge.csrfToken, ip: 'sensitive ip' }
+    await expect(auth.login(rejected)).rejects.toMatchObject({ code: 'UNAUTHENTICATED' })
+    for (let index = 0; index < 5; index++) {
+      await expect(auth.login(rejected)).rejects.toMatchObject({ code: 'RATE_LIMITED' })
+    }
+    expect(() => auth.readBearer(new Request('https://app.example.com/api/sites'))).toThrow()
+    const records = () => vi.mocked(console.info).mock.calls.map(([line]) => JSON.parse(line))
+    expect(records()).toEqual([
+      { event: 'login_succeeded', ownerId: auth.ownerId },
+      { event: 'key_created', ownerId: auth.ownerId, keyId: key.id },
+      { event: 'key_revoked', ownerId: auth.ownerId, keyId: key.id },
+      { event: 'login_rejected' },
+      { event: 'login_rate_limited' },
+    ])
+    const serialized = JSON.stringify(records())
+    for (const secret of ['correct test password', 'sensitive', signedIn.token, signedIn.session.csrfToken,
+      key.key, key.prefix, challenge.token, challenge.csrfToken]) expect(serialized).not.toContain(secret)
+    now += 60_000
+    for (let index = 0; index < 3; index++) await expect(auth.login(rejected)).rejects.toThrow()
+    expect(records().filter(record => record.event === 'login_rate_limited')).toHaveLength(2)
+  })
 
   it('authenticates the provisioned owner and expires its session after twelve hours', async () => {
     const signedIn = await login()

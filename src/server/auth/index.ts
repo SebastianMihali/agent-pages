@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { audit } from '../audit'
 import type { AppDatabase } from '../db'
-import { DomainError, requireOrigin, type Principal } from '../errors'
+import { DomainError, isDomainError, requireOrigin, type Principal } from '../errors'
 import { verifyPassword } from './password'
 
 export type Session = { id: string; ownerId: string; expiresAt: number; csrfToken: string }
@@ -42,6 +43,7 @@ export function createAuth(db: AppDatabase, config: AuthConfig, options: AuthOpt
   let challengesIssued = 0
   let attempts = 0
   let activeVerifications = 0
+  let rateLimitAuditedUntil = 0
   const failures = new Map<string, { count: number }>()
 
   function admitLogin(input: LoginInput) {
@@ -136,35 +138,49 @@ export function createAuth(db: AppDatabase, config: AuthConfig, options: AuthOpt
       return { token: value, csrfToken: csrf(value), expiresAt }
     },
     async login(input: LoginInput) {
-      const attempt = admitLogin(input)
-      if (!validToken(input.challengeToken) || !matchesCsrf(input.challengeToken, input.csrfToken)) throw denied()
-      if (activeVerifications >= maxVerifications) {
-        attempt.count--
-        throw new DomainError('BUSY', 'Login temporarily unavailable')
-      }
-      const challenge = sql.prepare('DELETE FROM auth_login_challenges WHERE token_hash = ? AND expires_at > ? RETURNING token_hash')
-        .get(hash(input.challengeToken), now())
-      if (!challenge) throw denied()
-      activeVerifications++
-      let correct: boolean
       try {
-        correct = await verifyPassword(input.password, config.adminPasswordHash)
-      } finally {
-        activeVerifications--
+        const attempt = admitLogin(input)
+        if (!validToken(input.challengeToken) || !matchesCsrf(input.challengeToken, input.csrfToken)) throw denied()
+        if (activeVerifications >= maxVerifications) {
+          attempt.count--
+          throw new DomainError('BUSY', 'Login temporarily unavailable')
+        }
+        const challenge = sql.prepare('DELETE FROM auth_login_challenges WHERE token_hash = ? AND expires_at > ? RETURNING token_hash')
+          .get(hash(input.challengeToken), now())
+        if (!challenge) throw denied()
+        activeVerifications++
+        let correct: boolean
+        try {
+          correct = await verifyPassword(input.password, config.adminPasswordHash)
+        } finally {
+          activeVerifications--
+        }
+        if (!correct || input.username !== config.adminUsername) throw denied()
+        attempt.count--
+        const value = token()
+        const session: Session = { id: randomUUID(), ownerId, expiresAt: now() + 12 * 60 * 60 * 1000, csrfToken: csrf(value) }
+        sql.transaction(() => {
+          sweepExpired()
+          if (input.previousSessionToken) logout(input.previousSessionToken)
+          const count = sql.prepare('SELECT COUNT(*) AS count FROM auth_sessions').get() as { count: number }
+          if (count.count >= maxSessions) throw new DomainError('RATE_LIMITED', 'Login temporarily unavailable')
+          sql.prepare('INSERT INTO auth_sessions (id, owner_id, token_hash, expires_at) VALUES (?, ?, ?, ?)')
+            .run(session.id, ownerId, hash(value), session.expiresAt)
+        })()
+        audit({ event: 'login_succeeded', ownerId })
+        return { token: value, session }
+      } catch (error) {
+        if (isDomainError(error) && (error.code === 'RATE_LIMITED' || error.code === 'BUSY')) {
+          // Saturated callers can retry without bound; emit at most once per minute.
+          if (now() >= rateLimitAuditedUntil) {
+            rateLimitAuditedUntil = now() + 60_000
+            audit({ event: 'login_rate_limited' })
+          }
+        } else {
+          audit({ event: 'login_rejected' })
+        }
+        throw error
       }
-      if (!correct || input.username !== config.adminUsername) throw denied()
-      attempt.count--
-      const value = token()
-      const session: Session = { id: randomUUID(), ownerId, expiresAt: now() + 12 * 60 * 60 * 1000, csrfToken: csrf(value) }
-      sql.transaction(() => {
-        sweepExpired()
-        if (input.previousSessionToken) logout(input.previousSessionToken)
-        const count = sql.prepare('SELECT COUNT(*) AS count FROM auth_sessions').get() as { count: number }
-        if (count.count >= maxSessions) throw new DomainError('RATE_LIMITED', 'Login temporarily unavailable')
-        sql.prepare('INSERT INTO auth_sessions (id, owner_id, token_hash, expires_at) VALUES (?, ?, ?, ?)')
-          .run(session.id, ownerId, hash(value), session.expiresAt)
-      })()
-      return { token: value, session }
     },
     getSession,
     requireSession,
@@ -192,6 +208,7 @@ export function createAuth(db: AppDatabase, config: AuthConfig, options: AuthOpt
         sql.prepare('INSERT INTO auth_api_keys (id, owner_id, token_hash, label, prefix, created_at) VALUES (?, ?, ?, ?, ?, ?)')
           .run(summary.id, principal.ownerId, hash(key), summary.label, summary.prefix, summary.createdAt)
       })()
+      audit({ event: 'key_created', ownerId: principal.ownerId, keyId: summary.id })
       return { ...summary, key }
     },
     listKeys(principal: Principal): KeySummary[] {
@@ -204,6 +221,7 @@ export function createAuth(db: AppDatabase, config: AuthConfig, options: AuthOpt
       if (!sql.prepare('DELETE FROM auth_api_keys WHERE id = ? AND owner_id = ?').run(keyId, principal.ownerId).changes) {
         throw new DomainError('NOT_FOUND', 'Not found')
       }
+      audit({ event: 'key_revoked', ownerId: principal.ownerId, keyId })
     },
     readBearer(request: Request): Principal {
       requireOrigin(request, config.appOrigin, false)

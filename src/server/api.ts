@@ -1,7 +1,7 @@
 import type { createAuth } from './auth'
 import { readJson } from './body'
 import type { AppConfig } from './config'
-import { DomainError, errorResponse } from './errors'
+import { DomainError, errorResponse, requireOrigin, type Principal } from './errors'
 import { readMultipart } from './multipart'
 import { parseSiteInput, siteInputSchemas } from './site-input'
 import type { SiteModule } from './sites'
@@ -20,11 +20,13 @@ function queryInput(url: URL): Record<string, unknown> {
 
 export function createApiHandler(config: AppConfig, auth: ReturnType<typeof createAuth>, sites: SiteModule) {
   const schemas = siteInputSchemas(config)
-  return async (request: Request): Promise<Response | null> => {
+  // Production dispatch authenticates before admission; direct users authenticate here.
+  return async (request: Request, authenticatedPrincipal?: Principal): Promise<Response | null> => {
     const url = new URL(request.url)
     if (url.pathname !== '/api' && !url.pathname.startsWith('/api/')) return null
     try {
-      const principal = auth.readBearer(request)
+      requireOrigin(request, config.appOrigin, false)
+      const principal = authenticatedPrincipal ?? auth.readBearer(request)
       const match = /^\/api\/sites(?:\/([a-f0-9]{32})(?:\/(file|files|files\/delete|visibility))?)?$/.exec(url.pathname)
       if (!match) throw new DomainError('NOT_FOUND', 'Not found')
       const [, siteId, resource] = match

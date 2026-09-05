@@ -26,6 +26,6 @@ Use isolated fixtures and capture exact versions/results. Request real deploymen
 
 ## Verification
 
-Local application checks pass (75 tests, lint, typecheck), browser checks pass, and Docker/Compose restart/restore/private-state checks pass. Actual Codex/Claude workflows are recorded in docs/mcp-clients.md. Remote Coolify/DNS/TLS checks are intentionally deferred by the owner; the release acceptance remains open for that deployment boundary.
+Local application checks pass (87 tests, lint, typecheck), browser checks pass, and Docker/Compose restart/restore/private-state checks pass. Actual Codex/Claude workflows are recorded in docs/mcp-clients.md. Remote Coolify/DNS/TLS checks are intentionally deferred by the owner; the release acceptance remains open for that deployment boundary.
 
 Commands, exact versions and limitations: [local verification record](../verification.md). Final independent code review is in progress.

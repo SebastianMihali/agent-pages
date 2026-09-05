@@ -134,7 +134,7 @@ export interface SiteModule {
   close(): Promise<void>
 }
 
-export type SiteModuleFaultPoint = 'before-revision-file-copy' | 'after-stage' | 'after-finalize' | 'after-commit'
+export type SiteModuleFaultPoint = 'before-revision-file-copy' | 'after-stage' | 'after-finalize' | 'after-commit' | 'after-list-lease'
 export type SiteModuleOptions = Readonly<{
   now?: () => Date
   fault?: (point: SiteModuleFaultPoint) => void | Promise<void>

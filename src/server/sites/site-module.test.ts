@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseConfig } from '../config'
 import { createSiteModule, type SiteModule } from '.'
 
@@ -61,6 +61,39 @@ describe('complete site revisions', () => {
     await sites.close(); sql.close()
   })
 
+  it('resolves a text create receipt before staging when stored capacity is full', async () => {
+    const limits = { MAX_FILE_SIZE_MB: '1', MAX_SITE_SIZE_MB: '1', MAX_TOTAL_SITE_SIZE_MB: '1', MAX_STORED_SIZE_MB: '1' }
+    const { dataDir, sites, sql, owner } = await fixture(limits)
+    const operationId = crypto.randomUUID()
+    const command = { operationId, name: 'Receipt A', files: [{ path: 'index.html', content: 'a'.repeat(400 * 1024) }] }
+    const first = await sites.createSite(owner, command)
+    await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Receipt B', files: [{ path: 'index.html', content: 'b'.repeat(300 * 1024) }] })
+    await chmod(join(dataDir, 'staging'), 0o500)
+    try {
+      expect(await sites.createSite(owner, command)).toEqual(first)
+      await expect(sites.createSite(owner, { ...command, files: [{ path: 'index.html', content: 'c'.repeat(400 * 1024) }] }))
+        .rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+    } finally { await chmod(join(dataDir, 'staging'), 0o700) }
+    await sites.close(); sql.close()
+  })
+
+  it('resolves a text write receipt before staging or version checks at full stored capacity', async () => {
+    const limits = { MAX_FILE_SIZE_MB: '1', MAX_SITE_SIZE_MB: '1', MAX_TOTAL_SITE_SIZE_MB: '1', MAX_STORED_SIZE_MB: '1' }
+    const { dataDir, sites, sql, owner } = await fixture(limits)
+    const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Write A', files: [{ path: 'index.html', content: 'a'.repeat(300 * 1024) }] })
+    const command = { operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1,
+      files: [{ path: 'index.html', content: 'b'.repeat(300 * 1024) }] }
+    const first = await sites.writeFiles(owner, command)
+    await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Write B', files: [{ path: 'index.html', content: 'c'.repeat(150 * 1024) }] })
+    await chmod(join(dataDir, 'staging'), 0o500)
+    try {
+      expect(await sites.writeFiles(owner, command)).toEqual(first)
+      await expect(sites.writeFiles(owner, { ...command, files: [{ path: 'index.html', content: 'd'.repeat(300 * 1024) }] }))
+        .rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+    } finally { await chmod(join(dataDir, 'staging'), 0o700) }
+    await sites.close(); sql.close()
+  })
+
   it('keeps the old revision active when finalization fails', async () => {
     const { dataDir, sql, sites, owner } = await fixture()
     const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Atomic', files: [{ path: 'index.html', content: 'old' }] })
@@ -101,6 +134,42 @@ describe('complete site revisions', () => {
     await module.close(); reopened.close()
   })
 
+  it('preserves the original staging error and releases its reservation when cleanup also fails', async () => {
+    const limits = { MAX_FILE_SIZE_MB: '1', MAX_SITE_SIZE_MB: '1', MAX_TOTAL_SITE_SIZE_MB: '1', MAX_STORED_SIZE_MB: '1' }
+    const { dataDir, sites, sql, owner } = await fixture(limits)
+    const stagingRoot = join(dataDir, 'staging')
+    async function* brokenBody(): AsyncGenerator<Uint8Array> {
+      await chmod(stagingRoot, 0o500)
+      throw Object.assign(new Error('primary input failure'), { code: 'EIO' })
+      yield new Uint8Array()
+    }
+    try {
+      await expect(sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Reservation',
+        files: [{ path: 'index.html', body: brokenBody(), maximumBytes: 400 * 1024 }] }))
+        .rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE', cause: { code: 'EIO' } })
+    } finally { await chmod(stagingRoot, 0o700) }
+    expect((await readdir(stagingRoot)).length).toBeGreaterThan(0)
+    await sites.runCleanup()
+    expect(await readdir(stagingRoot)).toEqual([])
+    const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Reservation', files: [{ path: 'index.html', content: 'a'.repeat(400 * 1024) }] })
+    expect(created.site.sizeBytes).toBe(400 * 1024)
+    await sites.close(); sql.close()
+  })
+
+  it('records text and delete no-ops without reserving a full revision', async () => {
+    const limits = { MAX_FILE_SIZE_MB: '1', MAX_SITE_SIZE_MB: '1', MAX_TOTAL_SITE_SIZE_MB: '1', MAX_STORED_SIZE_MB: '1' }
+    const { sites, sql, owner } = await fixture(limits)
+    const content = 'a'.repeat(300 * 1024)
+    const first = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'No-op A', files: [{ path: 'index.html', content }] })
+    await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'No-op B', files: [{ path: 'index.html', content: 'b'.repeat(300 * 1024) }] })
+    await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'No-op C', files: [{ path: 'index.html', content: 'c'.repeat(150 * 1024) }] })
+    const write = await sites.writeFiles(owner, { operationId: crypto.randomUUID(), siteId: first.site.id, expectedVersion: 1, files: [{ path: 'index.html', content }] })
+    expect(write).toMatchObject({ site: { version: 1 }, changedPaths: [], deletedPaths: [] })
+    const deleted = await sites.deleteFiles(owner, { operationId: crypto.randomUUID(), siteId: first.site.id, expectedVersion: 1, paths: ['missing.txt'] })
+    expect(deleted).toMatchObject({ site: { version: 1 }, changedPaths: [], deletedPaths: [] })
+    await sites.close(); sql.close()
+  })
+
   it('holds a retired revision while a reader lease is active', async () => {
     const { dataDir, sql, sites, owner } = await fixture()
     const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Lease', files: [{ path: 'index.html', content: 'old' }] })
@@ -112,6 +181,31 @@ describe('complete site revisions', () => {
     await sites.runCleanup()
     await expect(readFile(join(dataDir, 'sites', created.site.id, 'revisions', lease.revisionId, 'files', 'index.html'))).rejects.toThrow()
     await sites.close(); sql.close()
+  })
+
+  it('holds a retired revision while its file listing is in progress', async () => {
+    const { dataDir, sql, sites, owner } = await fixture()
+    const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Listing lease', files: [{ path: 'index.html', content: 'old' }] })
+    await sites.close(); sql.close()
+    const config = parseConfig({ NODE_ENV: 'test', APP_ORIGIN: 'https://app.example.com', CONTENT_BASE_DOMAIN: 'sites.example.com', DATA_DIR: dataDir,
+      ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'aa'.repeat(16)}$${'bb'.repeat(32)}`, MIN_FREE_DISK_MB: '1' })
+    const reopened = new Database(join(dataDir, 'database.sqlite'))
+    let listingStarted!: () => void; let finishListing!: () => void; let delayListing = true
+    const started = new Promise<void>((resolve) => { listingStarted = resolve })
+    const finish = new Promise<void>((resolve) => { finishListing = resolve })
+    const module = await createSiteModule(config, { sql: reopened, close: () => reopened.close() }, {
+      async fault(point) { if (delayListing && point === 'after-list-lease') { listingStarted(); await finish } },
+    })
+    await module.writeFiles(owner, { operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, files: [{ path: 'index.html', content: 'new' }] })
+    const listing = module.listFiles(owner, { siteId: created.site.id, revisionId: created.site.revisionId })
+    await started
+    expect(await module.runCleanup()).toEqual({ removedRevisions: 0, removedSites: 0 })
+    delayListing = false; finishListing()
+    expect((await listing).files).toMatchObject([{ path: 'index.html' }])
+    expect(await module.runCleanup()).toEqual({ removedRevisions: 1, removedSites: 0 })
+    await expect(module.listFiles(owner, { siteId: created.site.id, revisionId: created.site.revisionId }))
+      .rejects.toMatchObject({ code: 'REVISION_UNAVAILABLE' })
+    await module.close(); reopened.close()
   })
 
   it('serializes competing versions and tombstones before cleanup', async () => {
@@ -183,6 +277,16 @@ describe('complete site revisions', () => {
     await sites.close(); sql.close()
   })
 
+  it('releases a revision lease when an owned read path is invalid', async () => {
+    const { dataDir, sites, sql, owner } = await fixture()
+    const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Invalid read', files: [{ path: 'index.html', content: 'safe' }] })
+    await expect(sites.openOwnedFile(owner, { siteId: created.site.id, path: '../index.html' })).rejects.toMatchObject({ code: 'INVALID_PATH' })
+    await sites.deleteSite(owner, { operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1 })
+    expect(await sites.runCleanup()).toEqual({ removedRevisions: 0, removedSites: 1 })
+    await expect(readdir(join(dataDir, 'sites', created.site.id))).rejects.toThrow()
+    await sites.close(); sql.close()
+  })
+
   it('keeps receipts after physical deletion and scopes all reads to the owner', async () => {
     const { sites, sql, owner } = await fixture()
     const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Private', files: [{ path: 'index.html', content: 'secret' }] })
@@ -192,6 +296,24 @@ describe('complete site revisions', () => {
     await sites.runCleanup()
     expect(await sites.deleteSite(owner, command)).toEqual(deleted)
     await sites.close(); sql.close()
+  })
+
+  it('audits committed visibility and deletion changes once, excluding receipt replays', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const { sites, sql, owner } = await fixture()
+    try {
+      const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Audit', files: [{ path: 'index.html', content: 'private' }] })
+      const visibility = { operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, visibility: 'public' as const }
+      const published = await sites.setVisibility(owner, visibility)
+      await sites.setVisibility(owner, visibility)
+      const deletion = { operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: published.site.version }
+      await sites.deleteSite(owner, deletion)
+      await sites.deleteSite(owner, deletion)
+      expect(info.mock.calls.map(([record]) => JSON.parse(String(record)))).toEqual([
+        { event: 'site_visibility_changed', ownerId: owner.ownerId, siteId: created.site.id, operationId: visibility.operationId, visibility: 'public' },
+        { event: 'site_deleted', ownerId: owner.ownerId, siteId: created.site.id, operationId: deletion.operationId },
+      ])
+    } finally { info.mockRestore(); await sites.close(); sql.close() }
   })
 
   it('rejects another owner before consuming a streamed body', async () => {

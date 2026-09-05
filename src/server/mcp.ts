@@ -9,11 +9,11 @@ export function createMcpHandler(config: AppConfig, dependencies: {
   authenticate: (request: Request) => Principal | Promise<Principal>
   register: (server: McpServer, principal: Principal) => void
 }) {
-  return async (request: Request): Promise<Response> => {
+  return async (request: Request, authenticatedPrincipal?: Principal): Promise<Response> => {
     let server: McpServer | undefined
     try {
       requireOrigin(request, config.appOrigin, false)
-      const principal = await dependencies.authenticate(request)
+      const principal = authenticatedPrincipal ?? await dependencies.authenticate(request)
       if (request.method !== 'POST') {
         return new Response(null, { status: 405, headers: { allow: 'POST', 'cache-control': 'no-store' } })
       }
