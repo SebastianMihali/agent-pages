@@ -177,7 +177,8 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
   const quotaGate = new Mutex()
   const shutdown = new AbortController()
   const leases = new Map<string, number>()
-  const abandonedStaging = new Map<string, () => Promise<void>>()
+  type PendingCleanup = { roots: Set<string>; releaseReservation: () => Promise<void> }
+  const pendingCleanups = new Set<PendingCleanup>()
   let reservedActiveBytes = 0
   let reservedStoredBytes = 0
   let reservedSites = 0
@@ -198,14 +199,18 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
   await mkdir(sitesRoot, { recursive: true, mode: 0o700 })
   await mkdir(stagingRoot, { recursive: true, mode: 0o700 })
 
-  const discardStaging = async (root: string, releaseReservation: () => Promise<void>) => {
-    try { await rm(root, { recursive: true, force: true }); abandonedStaging.delete(root) }
-    catch {
-      // Retain conservative byte accounting until the owned files are reclaimed.
-      abandonedStaging.set(root, releaseReservation)
-      return
+  const retryCleanup = async (pending: PendingCleanup) => {
+    for (const root of [...pending.roots]) {
+      try { await rm(root, { recursive: true, force: true }); pending.roots.delete(root) } catch { /* Retry on the next cleanup pass. */ }
     }
-    await releaseReservation()
+    if (pending.roots.size) return
+    pendingCleanups.delete(pending)
+    await pending.releaseReservation()
+  }
+  const discardArtifacts = async (roots: readonly string[], releaseReservation: () => Promise<void>) => {
+    const pending = { roots: new Set(roots), releaseReservation }
+    pendingCleanups.add(pending)
+    await retryCleanup(pending)
   }
 
   const siteRow = (ownerId: string, siteId: string, includeExpired = false) => {
@@ -266,7 +271,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
   }
   const stageInputs = async (files: readonly FileInput[], maximumUploadBytes?: number) => {
     // A failed cleanup must not grow an unbounded set of unaccounted roots.
-    if (abandonedStaging.size) throw new DomainError('STORAGE_UNAVAILABLE', 'Staging cleanup must finish before accepting another upload')
+    if (pendingCleanups.size) throw new DomainError('STORAGE_UNAVAILABLE', 'Storage cleanup must finish before accepting another revision')
     if (!files.length || files.length > config.limits.maxBatchFiles) throw new DomainError('INVALID_INPUT', 'File batch must be nonempty and within the configured limit')
     const normalized = files.map((file) => ({ ...file, path: canonicalPath(file.path) }))
     validateTree(normalized.map((file) => file.path))
@@ -326,12 +331,11 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       }
       return { root, entries, releaseInputReservation }
     } catch (error) {
-      await discardStaging(root, releaseInputReservation)
+      await discardArtifacts([root], releaseInputReservation)
       throw error
     }
   }
-  const writeRevision = async (siteId: string, revisionId: string, staging: Awaited<ReturnType<typeof stageInputs>> | null, manifest: ManifestEntry[], previous?: StoredManifest) => {
-    const stagingContainer = staging?.root ?? join(stagingRoot, opaqueId())
+  const writeRevision = async (siteId: string, revisionId: string, stagingContainer: string, staging: Awaited<ReturnType<typeof stageInputs>> | null, manifest: ManifestEntry[], previous?: StoredManifest) => {
     const revisionStage = join(stagingContainer, 'revision')
     await mkdir(join(revisionStage, 'files'), { recursive: true, mode: 0o700 })
     const uploaded = new Map(staging?.entries.map((entry) => [entry.path, entry]))
@@ -340,8 +344,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       const handle = await open(path, constants.O_RDONLY)
       try { await handle.sync() } finally { await handle.close() }
     }
-    try {
-      for (const entry of manifest) {
+    for (const entry of manifest) {
         await options.fault?.('before-revision-file-copy')
         const destination = join(revisionStage, 'files', entry.path)
         const destinationDirectory = dirname(destination)
@@ -370,22 +373,21 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
           await destinationHandle.sync()
           } finally { await destinationHandle.close() }
         } finally { await sourceHandle.close() }
-      }
-      const manifestHandle = await open(join(revisionStage, 'manifest.json'), 'wx', 0o600)
-      try { await manifestHandle.writeFile(JSON.stringify({ revisionId, files: manifest })); await manifestHandle.sync() } finally { await manifestHandle.close() }
-      for (const directory of [...directories].sort((left, right) => right.length - left.length)) await syncDirectory(directory)
-      await syncDirectory(revisionStage)
-      await options.fault?.('after-stage')
-      const final = revisionPath(siteId, revisionId)
-      await mkdir(dirname(final), { recursive: true, mode: 0o700 })
-      await rename(revisionStage, final)
-      await syncDirectory(dirname(final))
-      await syncDirectory(dirname(dirname(final)))
-      await syncDirectory(sitesRoot)
-      await options.fault?.('after-finalize')
-      if (!staging) await rm(stagingContainer, { recursive: true, force: true })
-      return final
-    } catch (error) { await rm(revisionStage, { recursive: true, force: true }); if (!staging) await rm(stagingContainer, { recursive: true, force: true }); throw error }
+    }
+    const manifestHandle = await open(join(revisionStage, 'manifest.json'), 'wx', 0o600)
+    try { await manifestHandle.writeFile(JSON.stringify({ revisionId, files: manifest })); await manifestHandle.sync() } finally { await manifestHandle.close() }
+    for (const directory of [...directories].sort((left, right) => right.length - left.length)) await syncDirectory(directory)
+    await syncDirectory(revisionStage)
+    await options.fault?.('after-stage')
+    const final = revisionPath(siteId, revisionId)
+    await mkdir(dirname(final), { recursive: true, mode: 0o700 })
+    await rename(revisionStage, final)
+    await syncDirectory(dirname(final))
+    await syncDirectory(dirname(dirname(final)))
+    await syncDirectory(sitesRoot)
+    await options.fault?.('after-finalize')
+    if (!staging) await rm(stagingContainer, { recursive: true, force: true })
+    return final
   }
   const reserveQuota = async (siteSize: number, previousSize: number, storedBytes: number, creating: boolean) => quotaGate.run(async () => {
     if (siteSize > config.limits.maxSiteBytes) throw new DomainError('QUOTA_EXCEEDED', 'Site exceeds its size limit')
@@ -443,9 +445,10 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       const total = sorted.reduce((sum, entry) => sum + entry.sizeBytes, 0)
       if (sorted.length > config.limits.maxFilesPerSite) throw new DomainError('QUOTA_EXCEEDED', 'Site file count limit exceeded')
       const releaseQuota = await reserveQuota(total, 0, total, true)
-      try {
+      let published = false; let cleanupOwnsQuota = false
       const siteId = opaqueId(); const revisionId = opaqueId()
-      const final = await writeRevision(siteId, revisionId, staged, sorted)
+      try {
+      await writeRevision(siteId, revisionId, staged.root, staged, sorted)
       const timestamp = now()
       const row: SiteRow = { id: siteId, owner_id: principal.ownerId, name, visibility: 'private', visibility_generation: 1, version: 1,
         active_revision_id: revisionId, lifecycle: 'active', created_at_ms: timestamp, updated_at_ms: timestamp,
@@ -459,16 +462,20 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
           sql.prepare('INSERT INTO site_revisions(site_id,id,size_bytes,file_count,created_at_ms) VALUES (?,?,?,?,?)').run(siteId, revisionId, total, sorted.length, timestamp)
           saveReceipt(principal.ownerId, command.operationId, 'create', siteId, fingerprint, result, timestamp)
         })()
+        published = true
       } catch (error) {
         const committed = receipt(principal.ownerId, command.operationId, fingerprint) as CreateResult | undefined
-        if (committed) return committed
-        await rm(final, { recursive: true, force: true }); throw error
+        if (committed) { published = true; return committed }
+        throw error
       }
       await options.fault?.('after-commit')
       return result
-      } finally { await releaseQuota() }
+      } catch (error) {
+        if (!published) { cleanupOwnsQuota = true; await discardArtifacts([join(staged.root, 'revision'), join(sitesRoot, siteId)], releaseQuota) }
+        throw error
+      } finally { if (!cleanupOwnsQuota) await releaseQuota() }
       } finally { await releaseReceipt() }
-    } finally { await discardStaging(staged.root, staged.releaseInputReservation) }
+    } finally { await discardArtifacts([staged.root], staged.releaseInputReservation) }
   })
 
   const changeFiles = (kind: 'write' | 'delete-files', principal: Principal, command: { operationId: string; siteId: string; expectedVersion: number; files?: readonly FileInput[]; paths?: readonly string[]; maximumUploadBytes?: number }): Promise<FileMutationResult> =>
@@ -548,12 +555,15 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
           })())
           return result
         }
+        if (pendingCleanups.size) throw new DomainError('STORAGE_UNAVAILABLE', 'Storage cleanup must finish before accepting another revision')
         const releaseQuota = await reserveQuota(total, row.size_bytes, total, false)
+        let published = false; let cleanupOwnsQuota = false
+        const revisionId = opaqueId(); const final = revisionPath(row.id, revisionId)
+        const revisionWorkRoot = staged?.root ?? join(stagingRoot, opaqueId())
         try {
-        const revisionId = opaqueId()
-        const final = await writeRevision(row.id, revisionId, staged, manifest, previous)
+        await writeRevision(row.id, revisionId, revisionWorkRoot, staged, manifest, previous)
         const commitTimestamp = now()
-        if (row.expires_at_ms !== null && row.expires_at_ms <= commitTimestamp) { await rm(final, { recursive: true, force: true }); throw new DomainError('SITE_EXPIRED', 'Site has expired') }
+        if (row.expires_at_ms !== null && row.expires_at_ms <= commitTimestamp) throw new DomainError('SITE_EXPIRED', 'Site has expired')
         const updated = { ...row, version: row.version + 1, active_revision_id: revisionId, updated_at_ms: commitTimestamp, size_bytes: total, file_count: manifest.length }
         const result: FileMutationResult = { site: view(updated), changedPaths: changedPaths.sort(), deletedPaths: deletedPaths.sort(), operationId: command.operationId, operationExpiresAt: iso(commitTimestamp + receiptLifetimeMs) }
         try {
@@ -565,16 +575,23 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
             sql.prepare('UPDATE site_revisions SET cleanup_after_ms=? WHERE site_id=? AND id=?').run(commitTimestamp, row.id, row.active_revision_id)
             saveReceipt(principal.ownerId, command.operationId, kind, row.id, fingerprint, result, commitTimestamp)
           })())
+          published = true
         } catch (error) {
           const committed = receipt(principal.ownerId, command.operationId, fingerprint) as FileMutationResult | undefined
-          if (committed) return committed
-          await rm(final, { recursive: true, force: true }); throw error
+          if (committed) { published = true; return committed }
+          throw error
         }
         await options.fault?.('after-commit')
         return result
-        } finally { await releaseQuota() }
+        } catch (error) {
+          if (!published) {
+            cleanupOwnsQuota = true
+            await discardArtifacts(staged ? [join(staged.root, 'revision'), final] : [revisionWorkRoot, final], releaseQuota)
+          }
+          throw error
+        } finally { if (!cleanupOwnsQuota) await releaseQuota() }
         } finally { await releaseReceipt() }
-      } finally { if (staged) await discardStaging(staged.root, staged.releaseInputReservation) }
+      } finally { if (staged) await discardArtifacts([staged.root], staged.releaseInputReservation) }
     })
 
   const setVisibility: SiteModule['setVisibility'] = (principal, command) => mutation(principal, command.operationId, command.siteId, async () => {
@@ -672,7 +689,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
 
   const runCleanup: SiteModule['runCleanup'] = async (at = new Date(now())) => revisionGate.run(async () => {
     const timestamp = at.getTime(); let removedRevisions = 0; let removedSites = 0
-    for (const [root, releaseReservation] of abandonedStaging) await discardStaging(root, releaseReservation)
+    for (const pending of [...pendingCleanups]) await retryCleanup(pending)
     sql.prepare("UPDATE sites SET lifecycle='tombstoned',deletion_reason='expired',tombstoned_at_ms=?,cleanup_after_ms=?,version=version+1,visibility_generation=visibility_generation+1,updated_at_ms=? WHERE lifecycle='active' AND expires_at_ms IS NOT NULL AND expires_at_ms<=?")
       .run(timestamp, timestamp, timestamp, timestamp)
     const retired = sql.prepare("SELECT r.site_id,r.id,r.cleanup_attempts FROM site_revisions r JOIN sites s ON s.id=r.site_id WHERE r.cleanup_after_ms<=? AND r.id<>s.active_revision_id AND s.lifecycle='active' LIMIT 100").all(timestamp) as Array<{ site_id: string; id: string; cleanup_attempts: number }>
@@ -693,8 +710,6 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
 
   const recover = async () => {
     await rm(stagingRoot, { recursive: true, force: true }); await mkdir(stagingRoot, { recursive: true, mode: 0o700 })
-    for (const releaseReservation of abandonedStaging.values()) await releaseReservation()
-    abandonedStaging.clear()
     const rows = sql.prepare("SELECT * FROM sites WHERE lifecycle='active'").all() as SiteRow[]
     for (const row of rows) {
       const manifest = await readManifest(row.id, row.active_revision_id)

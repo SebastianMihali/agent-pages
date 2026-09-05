@@ -156,6 +156,93 @@ describe('complete site revisions', () => {
     await sites.close(); sql.close()
   })
 
+  it('tracks an unpublished create revision when database failure cleanup is denied', async () => {
+    const { dataDir, sites, sql, owner } = await fixture()
+    await sites.close(); sql.close()
+    const config = parseConfig({ NODE_ENV: 'test', APP_ORIGIN: 'https://app.example.com', CONTENT_BASE_DOMAIN: 'sites.example.com', DATA_DIR: dataDir,
+      ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'aa'.repeat(16)}$${'bb'.repeat(32)}`, MIN_FREE_DISK_MB: '1' })
+    const reopened = new Database(join(dataDir, 'database.sqlite'))
+    let denyCleanup = true; let unpublishedRoot = ''
+    const module = await createSiteModule(config, { sql: reopened, close: () => reopened.close() }, {
+      async fault(point) {
+        if (denyCleanup && point === 'after-finalize') {
+          const [siteId] = await readdir(join(dataDir, 'sites'))
+          unpublishedRoot = join(dataDir, 'sites', siteId!, 'revisions')
+          await chmod(unpublishedRoot, 0o500)
+        }
+      },
+    })
+    reopened.exec("CREATE TRIGGER fail_create_revision BEFORE INSERT ON site_revisions BEGIN SELECT RAISE(ABORT,'simulated database failure'); END")
+    try {
+      await expect(module.createSite(owner, { operationId: crypto.randomUUID(), name: 'Database failure', files: [{ path: 'index.html', content: 'unpublished' }] }))
+        .rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' })
+    } finally { if (unpublishedRoot) await chmod(unpublishedRoot, 0o700) }
+    await expect(module.createSite(owner, { operationId: crypto.randomUUID(), name: 'Blocked', files: [{ path: 'index.html', content: 'blocked' }] }))
+      .rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' })
+    expect(reopened.prepare('SELECT count(*) count FROM sites').get()).toEqual({ count: 0 })
+    await module.runCleanup()
+    expect(await readdir(join(dataDir, 'sites'))).toEqual([])
+    reopened.exec('DROP TRIGGER fail_create_revision'); denyCleanup = false
+    expect((await module.createSite(owner, { operationId: crypto.randomUUID(), name: 'Recovered', files: [{ path: 'index.html', content: 'published' }] })).site.version).toBe(1)
+    await module.close(); reopened.close()
+  })
+
+  it('tracks a finalized write revision when its database transaction fails', async () => {
+    const { dataDir, sites, sql, owner } = await fixture()
+    const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Write failure', files: [{ path: 'index.html', content: 'old' }] })
+    await sites.close(); sql.close()
+    const config = parseConfig({ NODE_ENV: 'test', APP_ORIGIN: 'https://app.example.com', CONTENT_BASE_DOMAIN: 'sites.example.com', DATA_DIR: dataDir,
+      ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'aa'.repeat(16)}$${'bb'.repeat(32)}`, MIN_FREE_DISK_MB: '1' })
+    const reopened = new Database(join(dataDir, 'database.sqlite'))
+    const revisionsRoot = join(dataDir, 'sites', created.site.id, 'revisions'); let denyCleanup = true
+    const module = await createSiteModule(config, { sql: reopened, close: () => reopened.close() }, {
+      async fault(point) { if (denyCleanup && point === 'after-finalize') await chmod(revisionsRoot, 0o500) },
+    })
+    reopened.exec(`CREATE TRIGGER fail_write_revision BEFORE INSERT ON site_revisions WHEN NEW.site_id='${created.site.id}' AND NEW.id<>'${created.site.revisionId}' BEGIN SELECT RAISE(ABORT,'simulated database failure'); END`)
+    const command = { operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, files: [{ path: 'index.html', content: 'new' }] }
+    try { await expect(module.writeFiles(owner, command)).rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' }) }
+    finally { await chmod(revisionsRoot, 0o700) }
+    expect((await readdir(revisionsRoot)).length).toBe(2)
+    await expect(module.createSite(owner, { operationId: crypto.randomUUID(), name: 'Blocked', files: [{ path: 'index.html', content: 'blocked' }] }))
+      .rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' })
+    await module.runCleanup()
+    expect(await readdir(revisionsRoot)).toEqual([created.site.revisionId])
+    reopened.exec('DROP TRIGGER fail_write_revision'); denyCleanup = false
+    expect((await module.writeFiles(owner, command)).site.version).toBe(2)
+    await module.close(); reopened.close()
+  })
+
+  it('tracks both roots of a delete-only revision interrupted after finalization', async () => {
+    const { dataDir, sites, sql, owner } = await fixture()
+    const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Delete failure', files: [
+      { path: 'index.html', content: 'keep' }, { path: 'remove.txt', content: 'remove' },
+    ] })
+    await sites.close(); sql.close()
+    const config = parseConfig({ NODE_ENV: 'test', APP_ORIGIN: 'https://app.example.com', CONTENT_BASE_DOMAIN: 'sites.example.com', DATA_DIR: dataDir,
+      ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'aa'.repeat(16)}$${'bb'.repeat(32)}`, MIN_FREE_DISK_MB: '1' })
+    const reopened = new Database(join(dataDir, 'database.sqlite'))
+    const revisionsRoot = join(dataDir, 'sites', created.site.id, 'revisions'); let fail = true
+    const module = await createSiteModule(config, { sql: reopened, close: () => reopened.close() }, {
+      async fault(point) {
+        if (fail && point === 'after-finalize') {
+          await chmod(revisionsRoot, 0o500)
+          throw Object.assign(new Error('interrupted after finalization'), { code: 'EIO' })
+        }
+      },
+    })
+    const command = { operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, paths: ['remove.txt'] }
+    try { await expect(module.deleteFiles(owner, command)).rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE', cause: { code: 'EIO' } }) }
+    finally { await chmod(revisionsRoot, 0o700) }
+    expect(await readdir(join(dataDir, 'staging'))).toEqual([])
+    expect((await readdir(revisionsRoot)).length).toBe(2)
+    await expect(module.deleteFiles(owner, command)).rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' })
+    await module.runCleanup()
+    expect(await readdir(revisionsRoot)).toEqual([created.site.revisionId])
+    fail = false
+    expect((await module.deleteFiles(owner, command)).site.version).toBe(2)
+    await module.close(); reopened.close()
+  })
+
   it('records text and delete no-ops without reserving a full revision', async () => {
     const limits = { MAX_FILE_SIZE_MB: '1', MAX_SITE_SIZE_MB: '1', MAX_TOTAL_SITE_SIZE_MB: '1', MAX_STORED_SIZE_MB: '1' }
     const { sites, sql, owner } = await fixture(limits)
