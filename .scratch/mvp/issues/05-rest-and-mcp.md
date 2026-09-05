@@ -1,7 +1,7 @@
 # REST, MCP and binary upload adapters
 
 Status: ready-for-agent
-Progress: open
+Progress: in-progress
 Blocked by: 04
 
 ## Objective
@@ -27,4 +27,6 @@ Prepare client examples from [configuration evidence](../../../docs/mcp-clients.
 
 ## Verification
 
-Not run; implementation has not started.
+Twelve focused REST/MCP tests pass, with strict shared schemas, ordered multipart/trailer rejection, cross-transport replay and bounded reads. Production HTTPS MCP initialization/discovery/calls and structured version conflicts also pass.
+
+Commands, exact versions and limitations: [local verification record](../verification.md). Final independent code review is in progress.

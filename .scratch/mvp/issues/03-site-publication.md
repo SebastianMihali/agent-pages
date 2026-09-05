@@ -1,7 +1,7 @@
 # Site lifecycle and complete revision publication
 
 Status: ready-for-agent
-Progress: open
+Progress: in-progress
 Blocked by: 02
 
 ## Objective
@@ -27,4 +27,6 @@ Add site/revision/receipt migrations, manifests, per-site coordination, installa
 
 ## Verification
 
-Not run; implementation has not started.
+The focused storage/lock suite passes 23 tests with no skip. It covers atomic publication, receipts, quota/concurrency, real process crashes/locks, symlinks, cleanup retry, expiry during writes, and corruption. ENOSPC is injected at the file-copy seam. Small/near-limit measurements are recorded centrally.
+
+Commands, exact versions and limitations: [local verification record](../verification.md). Final independent code review is in progress.

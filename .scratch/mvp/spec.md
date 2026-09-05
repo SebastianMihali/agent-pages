@@ -1,6 +1,6 @@
 # Agent Pages — MVP contract
 
-Updated: 2026-09-05. Status: ready for implementation; no acceptance criterion is verified yet.
+Updated: 2026-09-05. Status: implementation in progress; verification evidence is recorded in the tickets.
 
 This file is the authoritative implementation contract. See the [product direction](../../agent-pages-spec.md), [glossary](../../CONTEXT.md) and [execution plan](plan.md) for scope, vocabulary and ordering.
 
@@ -36,7 +36,7 @@ Owners sign in only on the application hostname. Uploaded content never receives
 
 1. A private top-level document navigation without a site grant redirects to the application's owner-only open-site screen. Unauthenticated asset/fetch requests receive a generic 404, not login HTML. Redirect targets are assembled from configured origins and server IDs.
 2. After login and an ownership check, an application-origin, CSRF-protected POST to open the site creates a random one-use ticket, valid for at most 60 seconds, bound to owner ID, site ID, current visibility generation and the live application session.
-3. Return an application-controlled form that POSTs the ticket to that site's reserved `/_agent/session` endpoint. Use no-store responses, a restrictive application CSP and an exact form destination. The ticket is carried in the POST body, never in a URL, log or uploaded page. A user-activated submit works without JavaScript; nonce-based auto-submit may improve the flow.
+3. Return an application-controlled form that POSTs the ticket to that site's reserved `/_agent/session` endpoint. Use no-store responses, a restrictive application CSP and an exact form destination. The ticket is carried in the POST body, never in a URL, log or uploaded page. Controlled handoff forms use `Referrer-Policy: origin`: browsers otherwise serialize form navigation Origin as null under no-referrer, breaking the exact-origin check. Only the configured origin is disclosed, never the path or ticket. A user-activated submit works without JavaScript; nonce-based auto-submit may improve the flow.
 4. The endpoint requires the exact application `Origin`, validates and atomically consumes the ticket, then sets a random host-only `__Host-agp-site` cookie with `Secure`, `HttpOnly`, `Path=/` and `SameSite=Lax`. It redirects with 303 to a validated local content path. Grant records store token hashes and are bound to the site, owner, application session and visibility generation.
 5. On every private page/asset request, check the grant, its unexpired/revoked parent session, current ownership, current visibility generation and site lifetime. No browser cookie or ticket authorizes REST/MCP or visibility changes.
 
@@ -87,12 +87,12 @@ Suggested disk layout:
 /data/database.sqlite
 /data/sites/<siteId>/revisions/<revisionId>/manifest.json
 /data/sites/<siteId>/revisions/<revisionId>/files/...
-/data/staging/<operationId>/...
+/data/staging/<random-staging-id>/...
 ```
 
 For create/write/delete-files:
 
-1. Authenticate, authorize, check an existing idempotency receipt, then validate expected version, the entire batch and resulting quotas. Reserve temporary disk capacity before accepting unbounded body work.
+1. Authenticate and authorize, then inspect any existing idempotency receipt. Canonical text fingerprints can be computed immediately; streamed file digests require bounded staging before a replay can be proven identical. Reserve temporary capacity before consuming file streams, and verify the complete fingerprint before returning a stored result. A successful matching replay precedes expected-version checks. Validate the entire prospective batch and resulting quotas before publication.
 2. Prepare a full new revision in staging. Copy unchanged regular files from the active revision with bounded streaming, apply writes/deletions and compute its manifest. Never mutate an active revision or follow user-controlled symlinks. Limit work to the configured site size/file count.
 3. Flush prepared files/manifest and relevant directories, then finalize the revision on the same filesystem. Only a complete, finalized directory can become active.
 4. In a short SQLite transaction, recheck lifecycle/version, set the active reference and counters, increment version and persist the operation receipt. Use durable SQLite settings appropriate to the supported local filesystem. Do not hold a database write transaction during file copying.
@@ -168,11 +168,11 @@ Create returns `{site, operationId, operationExpiresAt}`. Mutations return `{sit
 
 REST read-file returns raw authenticated bytes with no-store and server MIME headers. MCP read-file returns `{path, revisionId, digest, sizeBytes, contentType, content}` for text within its response cap. For binary or oversized text, return metadata and an authenticated REST download path, not base64 or a public bypass URL.
 
-For binary uploads, support a REST-only multipart variant of `PUT /api/sites/:siteId/files`. One `manifest` JSON part contains `operationId`, `expectedVersion` and `{path, partName}` entries; each named file part supplies raw bytes. Reject duplicate, absent or unreferenced parts. Stream to bounded staging, use the same atomic publication and idempotency contract, and never trust client MIME or filesystem filenames. Text and binary parts may share one atomic batch. Initial binary assets can be added to a private site after creation.
+For binary uploads, support a REST-only multipart variant of `PUT /api/sites/:siteId/files`. The first part must be `manifest` JSON. It contains `operationId`, `expectedVersion` and `{path, partName}` entries; each named file part supplies raw bytes, in manifest entry order. This order permits bounded streaming and backpressure without an extra unaccounted staging layer. Reject duplicate, absent, out-of-order or unreferenced parts and malformed trailing data before committing the revision. Stream to bounded staging, use the same atomic publication and idempotency contract, and never trust client MIME or filesystem filenames. Text and binary parts may share one atomic batch. Initial binary assets can be added to a private site after creation.
 
 MCP uses the official SDK's Streamable HTTP transport integrated through TanStack's request handler. Prefer stateless request handling with JSON responses for these short operations; do not add resumable event streams or legacy SSE transport without a proven client need. Respect SDK initialization, protocol versions, Accept handling and GET/405 behavior. Authenticate/validate Origin on every request, including tool discovery. Close per-request resources. Tool outputs provide structured results and bounded text summaries. Mark read tools read-only and mutation tools appropriately, including destructive file/site operations and the visibility operation's exposure semantics.
 
-REST errors: `{error: {code, message, retryable, requestId, details?}}`. Use equivalent fields in MCP tool-error results with `isError: true`; transport/protocol errors follow the SDK. Expected mappings:
+REST errors: `{error: {code, message, retryable, requestId, details?}}`. Use equivalent fields in MCP tool-error results with `isError: true`; transport/protocol errors and tool-schema validation errors follow the SDK (`isError` for invalid tool input); domain failures use the structured error fields above. Expected mappings:
 
 | Code | HTTP | Retry behavior |
 | --- | --- | --- |
@@ -211,7 +211,7 @@ All byte limits use binary MiB. Defaults are configurable and validated as posit
 
 Reject or cancel oversize bodies while reading, including chunked requests with no Content-Length. Estimate full-revision staging cost, reserve capacity across concurrent operations and include obsolete revisions in physical content accounting until reclaimed. Also check actual disk free space for SQLite, logs and other volume use; accounting is not a substitute for ENOSPC handling.
 
-Bound password verification concurrency and apply configurable login throttling (initially 5 failures per minute per normalized account/IP, plus an instance-wide cap). Proxy-derived IPs are trusted only from the configured proxy. Apply management request limits before body parsing; receipts and limits cannot be bypassed by rotating API keys. Pagination, session/grant counts and streamed-response cancellation must prevent unbounded process memory growth.
+Bound password verification with `MAX_CONCURRENT_PASSWORD_VERIFICATIONS` (2; maximum 8), and throttle with `MAX_LOGIN_FAILURES_PER_MINUTE` (5) and `MAX_LOGIN_ATTEMPTS_PER_MINUTE` (60). The initial deployment uses a conservative installation-wide address bucket for each normalized account, ignoring forwarded client-IP headers; it does not trust a user-supplied address. Authenticated request processing shares an installation-wide admission cap equal to active-plus-queued mutation limits. Body readers cancel stalled requests after 30 seconds. Apply management request limits before body parsing; receipts and limits cannot be bypassed by rotating API keys. Pagination, session/grant counts and streamed-response cancellation must prevent unbounded process memory growth.
 
 ## Web interface and operations
 

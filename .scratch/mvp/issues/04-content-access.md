@@ -1,7 +1,7 @@
 # Owner-only content access and isolated static serving
 
 Status: ready-for-agent
-Progress: open
+Progress: in-progress
 Blocked by: 03
 
 ## Objective
@@ -26,4 +26,6 @@ Serve generated content solely on its site's hostname. Use real local HTTPS and 
 
 ## Verification
 
-Not run; implementation has not started.
+Access/content tests and Chromium/Firefox production HTTPS tests pass, including site-bound ticket replay/expiry, 101 reopenings, grants/logout/visibility revocation, deep links, all asset types, nested routing/HEAD/custom 404 and adversarial sibling-origin behavior.
+
+Commands, exact versions and limitations: [local verification record](../verification.md). Final independent code review is in progress.

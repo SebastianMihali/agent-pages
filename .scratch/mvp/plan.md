@@ -1,6 +1,6 @@
 # MVP implementation plan
 
-Updated: 2026-09-05. Planning complete; implementation has not started.
+Updated: 2026-09-05. Implementation in progress; local acceptance and release verification are being recorded.
 
 ## Decisions settled with the owner
 
@@ -23,13 +23,13 @@ Before changing a ticket to done, record the changed files, verification command
 
 | Ticket | Deliverable | Blocked by | Progress |
 | --- | --- | --- | --- |
-| [01](issues/01-runtime-and-http-integration.md) | Small bootable TanStack/Node application, host dispatch and production MCP transport probe | — | open |
-| [02](issues/02-owner-identity.md) | One owner, sessions, personal keys and shared authorization | 01 | open |
-| [03](issues/03-site-publication.md) | Revision storage, site lifecycle, retry/concurrency and quotas | 02 | open |
-| [04](issues/04-content-access.md) | Private-site browser handoff, content serving and explicit public visibility | 03 | open |
-| [05](issues/05-rest-and-mcp.md) | Complete shared REST/MCP operations and binary upload | 04 | open |
-| [06](issues/06-owner-interface.md) | Minimal owner UI and visibility/key controls | 05 | open |
-| [07](issues/07-release-verification.md) | Both live clients, browser isolation, Docker/Coolify and restore verification | 06 | open |
+| [01](issues/01-runtime-and-http-integration.md) | Small bootable TanStack/Node application, host dispatch and production MCP transport probe | — | in-progress |
+| [02](issues/02-owner-identity.md) | One owner, sessions, personal keys and shared authorization | 01 | in-progress |
+| [03](issues/03-site-publication.md) | Revision storage, site lifecycle, retry/concurrency and quotas | 02 | in-progress |
+| [04](issues/04-content-access.md) | Private-site browser handoff, content serving and explicit public visibility | 03 | in-progress |
+| [05](issues/05-rest-and-mcp.md) | Complete shared REST/MCP operations and binary upload | 04 | in-progress |
+| [06](issues/06-owner-interface.md) | Minimal owner UI and visibility/key controls | 05 | in-progress |
+| [07](issues/07-release-verification.md) | Both live clients, browser isolation, Docker/Coolify and restore verification | 06 | in-progress |
 
 Build the smallest fixture/UI necessary to prove each earlier ticket; the UI ticket finishes usability, not deferred security. All development and fixture data remain local/isolated until private-content tests pass. The first real owner workflow is create-private → open-as-owner → read/update → explicitly make-public → make-private.
 
@@ -37,7 +37,7 @@ Build the smallest fixture/UI necessary to prove each earlier ticket; the UI tic
 
 These are bounded engineering tasks, not pending product questions:
 
-- Select compatible stable TanStack/MCP/Drizzle/Zod versions and verify the chosen Node runtime; pin them in ticket 01.
+- Pin compatible TanStack/MCP/SQLite/Zod versions and Node. Nitro 3 is a documented exception to the stable-version preference: the current TanStack integration uses `nitro/vite`, available in the pinned beta. Production/native build and HTTP tests guard this integration; reassess before dependency upgrades.
 - Verify stateless MCP JSON response behavior and the built server's raw request/body/stream handling before implementing all tools.
 - Validate wildcard TLS, host forwarding and HTTP-method handling through the intended Coolify proxy configuration; document exact tested versions.
 - Validate Chromium/Firefox origin isolation and the private-site POST handoff before treating the hosting path as ready.
@@ -49,7 +49,7 @@ If a check disproves the chosen design, update its ADR/contract before expanding
 
 Local implementation can start without these. Deployment verification needs the actual application hostname, content base domain, control over wildcard DNS/TLS, a reachable Coolify target and a running Docker engine. Request those when the container and deployment instructions are concrete; do not request or store credentials in this plan.
 
-The environment inspection is recorded in [development preparation](../../docs/development.md). The Docker CLI is installed but its engine was unavailable at the planning check. This does not block documentation or local Node implementation; Docker checks remain required before MVP completion.
+The environment inspection is recorded in [development preparation](../../docs/development.md). Docker became available during implementation. Build, persistence and restore evidence belongs in ticket 07; the intended remote proxy still requires deployment inputs.
 
 The project intends open-source distribution, but no license has been selected. Choose a license before external distribution; this is not a prerequisite for local implementation.
 

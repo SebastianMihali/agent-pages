@@ -1,7 +1,7 @@
 # Runtime and HTTP integration
 
 Status: ready-for-agent
-Progress: open
+Progress: in-progress
 Blocked by: none
 
 ## Objective
@@ -25,4 +25,6 @@ Use an isolated local test endpoint/tool to verify initialization, discovery and
 
 ## Verification
 
-Not run; implementation has not started.
+Runtime/config/hosts/body/MCP tests pass; production SSR/HTTP and native startup are covered by the browser suite and Docker smoke. Dependencies install from the pinned lockfile. Nitro beta/native packaging and the process-wide bootstrap seam are documented.
+
+Commands, exact versions and limitations: [local verification record](../verification.md). Final independent code review is in progress.

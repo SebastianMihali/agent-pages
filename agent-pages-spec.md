@@ -60,7 +60,7 @@ Integrity and access checks are part of the MVP: complete revision publication, 
 
 ## Stack
 
-Use one TypeScript package with pnpm, Node.js, TanStack Start and React. Use SQLite with Drizzle for metadata, local filesystem for content, Zod at external inputs, and the official MCP TypeScript SDK with Streamable HTTP. Use Tailwind and shadcn/ui for the small web interface when it is implemented.
+Use one TypeScript package with pnpm, Node.js, TanStack Start and React. Use SQLite with explicit parameterized queries for metadata ([ADR 0003](docs/adr/0003-explicit-sqlite-persistence.md)), local filesystem for content, Zod at external inputs, and the official MCP TypeScript SDK with Streamable HTTP. Use Tailwind and small accessible components for the owner interface.
 
 Keep TanStack routing as the HTTP integration point. Add TanStack Query only where the web interface has a concrete need for its cache. Select mutually compatible stable dependency versions during the first ticket, then pin the runtime/package manager and generate a lockfile.
 

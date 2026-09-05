@@ -1,7 +1,7 @@
 # Owner identity and management authentication
 
 Status: ready-for-agent
-Progress: open
+Progress: in-progress
 Blocked by: 01
 
 ## Objective
@@ -26,4 +26,6 @@ Provide the internal authorization/session operations needed by the later privat
 
 ## Verification
 
-Not run; implementation has not started.
+Real SQLite auth tests cover stable identity, hash-only secrets, CSRF, rotation, expiry, throttling/challenge reuse and revocation. Browser tests cover once-only copy, no persistent browser key storage, login/logout and production cookies.
+
+Commands, exact versions and limitations: [local verification record](../verification.md). Final independent code review is in progress.

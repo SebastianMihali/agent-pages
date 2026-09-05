@@ -1,0 +1,21 @@
+services:
+  agent-pages:
+    build: .
+    restart: unless-stopped
+    # Preserve scrypt's dollar signs without Compose interpolation.
+    env_file:
+      - path: .env.production
+        format: raw
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /data
+      HOST: 0.0.0.0
+      PORT: 3000
+    ports:
+      - '127.0.0.1:3000:3000'
+    volumes:
+      - agent-pages-data:/data
+    stop_grace_period: 40s
+
+volumes:
+  agent-pages-data:

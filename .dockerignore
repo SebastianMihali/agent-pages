@@ -1,0 +1,13 @@
+.DS_Store
+.data
+.env
+.env.*
+.git
+.output
+.scratch
+coverage
+docs
+node_modules
+playwright-report
+test-results
+*.log

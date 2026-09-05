@@ -1,0 +1,287 @@
+import {
+  Globe2,
+  KeyRound,
+  LogOut,
+  RefreshCw,
+  ShieldCheck,
+} from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import type { FormEvent, ReactNode } from 'react'
+import { Brand } from '../brand'
+import { Button } from '../ui/button'
+import { Input } from '../ui/input'
+import { Spinner } from '../ui/spinner'
+import { isUnauthorized, messageFrom, requestJson } from './api'
+import type { Session } from './api'
+import { ErrorMessage } from './error-message'
+import { KeysSection } from './keys-section'
+import { SitesSection } from './sites-section'
+
+export function OwnerApp({ selectedSiteId, returnPath, onSelectSite }: {
+  selectedSiteId?: string
+  returnPath?: string
+  onSelectSite: (siteId: string, replace?: boolean) => void
+}) {
+  const [session, setSession] = useState<Session | null>(null)
+  const [sessionError, setSessionError] = useState<string | null>(null)
+
+  const loadSession = useCallback(async () => {
+    try {
+      setSessionError(null)
+      setSession(await requestJson<Session>('/web/session'))
+    } catch (error) {
+      setSessionError(messageFrom(error))
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadSession()
+  }, [loadSession])
+
+  const handleUnauthorized = useCallback(() => {
+    setSession(null)
+    void loadSession()
+  }, [loadSession])
+
+  if (!session) {
+    return <SessionLoading error={sessionError} onRetry={loadSession} />
+  }
+  if (!session.authenticated) {
+    return <Login session={session} onAuthenticated={loadSession} />
+  }
+  return (
+    <Dashboard
+      onLoggedOut={loadSession}
+      onSelectSite={onSelectSite}
+      onUnauthorized={handleUnauthorized}
+      returnPath={returnPath}
+      selectedSiteId={selectedSiteId}
+      session={session}
+    />
+  )
+}
+
+function SessionLoading({ error, onRetry }: { error: string | null; onRetry: () => Promise<void> }) {
+  return (
+    <main className="grid min-h-screen place-items-center px-6">
+      <div className="flex max-w-sm flex-col items-center gap-5 text-center">
+        <Brand />
+        {error ? (
+          <>
+            <ErrorMessage>{error}</ErrorMessage>
+            <Button variant="secondary" onClick={() => void onRetry()}>
+              <RefreshCw aria-hidden="true" className="size-4" />
+              Riprova
+            </Button>
+          </>
+        ) : (
+          <div className="flex items-center gap-2 text-sm text-slate-500">
+            <Spinner />
+            Connessione in corso…
+          </div>
+        )}
+      </div>
+    </main>
+  )
+}
+
+function Login({ session, onAuthenticated }: {
+  session: Extract<Session, { authenticated: false }>
+  onAuthenticated: () => Promise<void>
+}) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      await requestJson('/web/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password, csrfToken: session.csrfToken }),
+      })
+      setPassword('')
+      await onAuthenticated()
+    } catch (cause) {
+      setPassword('')
+      setError(messageFrom(cause))
+      // Login challenges are one-use even when credentials are rejected.
+      await onAuthenticated()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="grid min-h-screen lg:grid-cols-[minmax(0,1fr)_minmax(28rem,0.72fr)]">
+      <section className="hidden flex-col justify-between border-r border-slate-200 bg-white p-12 lg:flex">
+        <Brand />
+        <div className="max-w-xl pb-12">
+          <p className="mb-5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+            Hosting statico self-hosted
+          </p>
+          <h1 className="text-balance text-5xl font-semibold leading-[1.06] tracking-[-0.045em] text-slate-950">
+            I tuoi siti, sotto il tuo controllo.
+          </h1>
+          <p className="mt-6 max-w-lg text-lg leading-8 text-slate-500">
+            Pubblica con i tuoi agenti, controlla la visibilità e mantieni un indirizzo stabile per ogni sito.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-sm text-slate-400">
+          <ShieldCheck aria-hidden="true" className="size-4" />
+          I nuovi siti sono sempre privati
+        </div>
+      </section>
+
+      <section className="flex min-h-screen items-center justify-center px-6 py-12">
+        <div className="w-full max-w-sm">
+          <Brand className="mb-14 lg:hidden" />
+          <p className="text-sm font-medium text-slate-500">Area proprietario</p>
+          <h2 className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-slate-950">Bentornato</h2>
+          <p className="mt-3 text-sm leading-6 text-slate-500">
+            Accedi per gestire siti, visibilità e chiavi API.
+          </p>
+
+          <form className="mt-9 space-y-5" onSubmit={submit} aria-busy={busy}>
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium text-slate-700">Nome utente</span>
+              <Input
+                autoComplete="username"
+                autoFocus
+                disabled={busy}
+                onChange={(event) => setUsername(event.target.value)}
+                required
+                value={username}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium text-slate-700">Password</span>
+              <Input
+                autoComplete="current-password"
+                disabled={busy}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+                type="password"
+                value={password}
+              />
+            </label>
+            {error && <ErrorMessage>{error}</ErrorMessage>}
+            <Button className="w-full" disabled={busy} size="default" type="submit">
+              {busy && <Spinner />}
+              Accedi
+            </Button>
+          </form>
+        </div>
+      </section>
+    </main>
+  )
+}
+
+function Dashboard({ session, selectedSiteId, returnPath, onSelectSite, onLoggedOut, onUnauthorized }: {
+  session: Extract<Session, { authenticated: true }>
+  selectedSiteId?: string
+  returnPath?: string
+  onSelectSite: (siteId: string, replace?: boolean) => void
+  onLoggedOut: () => Promise<void>
+  onUnauthorized: () => void
+}) {
+  const [section, setSection] = useState<'sites' | 'keys'>('sites')
+  const [loggingOut, setLoggingOut] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function logout() {
+    setLoggingOut(true)
+    setError(null)
+    try {
+      await requestJson('/web/logout', {
+        method: 'POST',
+        body: JSON.stringify({ csrfToken: session.csrfToken }),
+      })
+      await onLoggedOut()
+    } catch (cause) {
+      if (isUnauthorized(cause)) onUnauthorized()
+      else setError(messageFrom(cause))
+    } finally {
+      setLoggingOut(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-[92rem] items-center justify-between px-4 sm:px-6 lg:px-8">
+          <Brand />
+          <div className="flex items-center gap-2">
+            <span className="hidden text-sm text-slate-500 sm:block">{session.username}</span>
+            <Button aria-label="Esci" disabled={loggingOut} onClick={() => void logout()} variant="ghost">
+              {loggingOut ? <Spinner /> : <LogOut aria-hidden="true" className="size-4" />}
+              <span className="hidden sm:inline">Esci</span>
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto grid max-w-[92rem] gap-8 px-4 py-7 sm:px-6 lg:grid-cols-[13rem_minmax(0,1fr)] lg:px-8 lg:py-10">
+        <nav aria-label="Navigazione principale" className="flex gap-2 lg:flex-col">
+          <NavigationButton
+            active={section === 'sites'}
+            icon={<Globe2 aria-hidden="true" className="size-4" />}
+            onClick={() => setSection('sites')}
+          >
+            Siti
+          </NavigationButton>
+          <NavigationButton
+            active={section === 'keys'}
+            icon={<KeyRound aria-hidden="true" className="size-4" />}
+            onClick={() => setSection('keys')}
+          >
+            Chiavi API
+          </NavigationButton>
+        </nav>
+
+        <div className="min-w-0">
+          {error && <div className="mb-5"><ErrorMessage>{error}</ErrorMessage></div>}
+          {section === 'sites' ? (
+            <SitesSection
+              csrfToken={session.csrfToken}
+              onSelectSite={onSelectSite}
+              onUnauthorized={onUnauthorized}
+              returnPath={returnPath}
+              selectedSiteId={selectedSiteId}
+            />
+          ) : (
+            <KeysSection
+              csrfToken={session.csrfToken}
+              onError={setError}
+              onUnauthorized={onUnauthorized}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function NavigationButton({ active, children, icon, onClick }: {
+  active: boolean
+  children: string
+  icon: ReactNode
+  onClick: () => void
+}) {
+  return (
+    <button
+      aria-current={active ? 'page' : undefined}
+      className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors ${
+        active ? 'bg-white text-slate-950 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:bg-white hover:text-slate-950'
+      }`}
+      onClick={onClick}
+      type="button"
+    >
+      {icon}
+      {children}
+    </button>
+  )
+}

@@ -1,20 +1,37 @@
 # Agent Pages
 
-A small self-hosted static hosting application for coding agents. Create a site, receive a stable URL and update its files through MCP or REST.
+Self-hosted static hosting for coding agents. Create a site, receive a stable URL and update its files through MCP or REST.
 
-**Status:** specification and implementation plan prepared. There is no runnable application or published Docker image yet.
+**Status:** the first single-owner implementation is available in this repository. Local release verification is in progress; deployment through the intended Coolify proxy is still unverified. There is no published Docker image.
 
-Sites start private to their owner. An owner can explicitly make a site public and return it to private visibility. Private access is not shared with clients or collaborators in the initial scope.
+Sites start private to their owner. An explicit visibility change makes a site public, and it can be made private again. The application and each site's uploaded code run on separate browser origins. Private sharing, multiple accounts, ZIP uploads, browser editing, SPA fallback and rollback are outside this MVP.
 
-## Start here
+## Run locally
+
+Use Node 24.16 and pnpm 11.5 (exact dependency versions are pinned).
+
+```sh
+pnpm install --frozen-lockfile
+cp .env.example .env
+pnpm admin:password-hash
+```
+
+The last command reads a password privately and prints its salted hash. Set `ADMIN_PASSWORD_HASH` in `.env` to that complete value, retaining the dollar signs, and choose `ADMIN_USERNAME`. The example uses isolated local development storage and distinct `.localhost` hosts.
+
+```sh
+pnpm dev
+```
+
+Open `http://app.agent-pages.localhost:3000`, sign in and create a labeled API key for each agent client. Use the [MCP client setup](docs/mcp-clients.md) to connect Codex or Claude Code. Initial site creation and uploads use MCP/REST; the web interface lists sites, opens private content and manages visibility and keys.
+
+Production requires HTTPS, an application hostname and wildcard site hostnames. See [development and validation](docs/development.md) and [container, proxy and backup operations](docs/operations.md). Production data belongs on one local persistent volume with one application process.
+
+## Project references
 
 - [Product direction](agent-pages-spec.md)
-- [MVP contract](.scratch/mvp/spec.md)
-- [Implementation plan and tickets](.scratch/mvp/plan.md)
+- [MVP contract and acceptance](.scratch/mvp/spec.md)
+- [Implementation tickets](.scratch/mvp/plan.md)
 - [Domain glossary](CONTEXT.md)
-- [Development preparation](docs/development.md)
-- [MCP client configuration draft](docs/mcp-clients.md)
+- [Agent Pages skill](skills/agent-pages/SKILL.md)
 
-The intended deployment is one Docker application and one persistent `/data` volume, with an application hostname and wildcard site hostnames for browser isolation. The first supported agent clients are Codex and Claude Code.
-
-Install, build, deployment and usage commands will be added when they have been implemented and verified. The [original specification](docs/archive/agent-pages-spec-original.md) is preserved as historical context and is not an implementation contract.
+The [original specification](docs/archive/agent-pages-spec-original.md) is historical context, not the implementation contract. A license must be selected before external distribution.
