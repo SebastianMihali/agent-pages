@@ -1,7 +1,7 @@
 # Runtime and HTTP integration
 
 Status: ready-for-agent
-Progress: in-progress
+Progress: done
 Blocked by: none
 
 ## Objective
@@ -16,15 +16,15 @@ Use an isolated local test endpoint/tool to verify initialization, discovery and
 
 ## Acceptance
 
-- [ ] Clean dependency install, focused test, type/lint checks and production build pass.
-- [ ] App host, valid content host and unknown host reach distinct controlled handlers; forwarded-host spoofing fails the configured policy.
-- [ ] The built app accepts the official SDK request/response model without buffering an unbounded body or leaking per-request resources.
-- [ ] Health output is minimal and malformed/insecure production config fails with actionable context.
-- [ ] The Dockerfile builds and starts if the local engine is available; otherwise record this check as outstanding and keep final release blocked on it.
-- [ ] Add actual development commands and selected versions to documentation without claiming site hosting is implemented.
+- [x] Clean dependency install, focused test, type/lint checks and production build pass.
+- [x] App host, valid content host and unknown host reach distinct controlled handlers; forwarded-host spoofing fails the configured policy.
+- [x] The built app accepts the official SDK request/response model without buffering an unbounded body or leaking per-request resources.
+- [x] Health output is minimal and malformed/insecure production config fails with actionable context.
+- [x] The Dockerfile builds and starts if the local engine is available; otherwise record this check as outstanding and keep final release blocked on it.
+- [x] Add actual development commands and selected versions to documentation without claiming site hosting is implemented.
 
 ## Verification
 
 Runtime/config/hosts/body/MCP tests pass; production SSR/HTTP and native startup are covered by the browser suite and Docker smoke. Dependencies install from the pinned lockfile. Nitro beta/native packaging and the process-wide bootstrap seam are documented.
 
-Commands, exact versions and limitations: [local verification record](../verification.md). Final independent code review is in progress.
+Commands, exact versions and limitations: [local verification record](../verification.md). The independent Standards and Spec findings for this scope are closed; see the [review record](../review.md).

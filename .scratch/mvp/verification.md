@@ -4,11 +4,11 @@ Date: 2026-09-05. Remote Coolify deployment is intentionally deferred by the own
 
 ## Automated application checks
 
-`pnpm lint`, `pnpm typecheck` and `pnpm test` passed: **87 tests in 17 files**, no skipped fixtures. Tests use isolated temporary SQLite databases and file trees.
+`pnpm lint`, `pnpm typecheck` and `pnpm test` passed: **90 tests in 17 files**, no skipped fixtures. Tests use isolated temporary SQLite databases and file trees.
 
 Coverage includes production configuration validation; exact host dispatch; bounded JSON and request admission; owner/session/CSRF/key isolation; ticket expiry/replay/site binding; replacement and revocation of grants; content routing/MIME/HEAD; all REST/MCP domain operations; multipart limits/order/trailer validation; cross-transport receipts; competing versions; staging reservations; visibility/lifecycle races; expiry; cleanup retries; and process crash/restart.
 
-Storage-specific evidence includes an exact child exit at the post-finalize/pre-commit point, an OS advisory lock tested across competing/crashed processes, real symlink substitution and chmod/EACCES cleanup failure, same-size file corruption caught at startup, and mixed-character paginated manifests. ENOSPC is injected at the private file-copy failure seam; the test does not fill a physical disk. Power-loss durability on arbitrary filesystems is not claimed.
+Storage-specific evidence includes an exact child exit at the post-finalize/pre-commit point, an OS advisory lock tested across competing/crashed processes, real symlink substitution and chmod/EACCES cleanup failure, same-size file corruption caught at startup, mixed-character paginated manifests, and denied cleanup of uncommitted final revisions after real database-trigger failures. Grouped reservations retain accounting until every owned artifact is reclaimed. ENOSPC is injected at the private file-copy failure seam; the test does not fill a physical disk. Power-loss durability on arbitrary filesystems is not claimed.
 
 The 30-second request deadline cancels a stalled body reader; shutdown aborts mutation streams and drains work before closing the database. Cross-bundle domain-error tests preserve the intended error codes when Nitro bootstrap and TanStack SSR use separate constructors.
 
@@ -34,7 +34,7 @@ A cold archive restored to a fresh volume, accepted owner login and the retained
 
 A separate actual-container check proves `env_file.format: raw` preserves all scrypt dollar signs; Compose 5.1.4 was used.
 
-The local image `agent-pages:mvp-local` built successfully (Linux arm64, non-root). Its smoke verified readiness, SSR, anonymous management 401, unknown/content host isolation 404 and missing-configuration exit before serving. Image identity will be refreshed after review if code changes. Wildcard DNS, public certificate issuance and the actual Coolify proxy remain deployment checks, as explicitly requested by the owner.
+The local image `agent-pages:mvp-local` built successfully (Linux arm64, non-root). Its smoke verified readiness, SSR, anonymous management 401, unknown/content host isolation 404 and missing-configuration exit before serving. Final image identity: `sha256:72c5dad9af64f5b364dbf3f16d83a525c5d12539e60472a6e03cd8d202f801fc`, built from code revision `cfbbc78`. The final smoke used an isolated temporary container/volume and removed both afterward. Wildcard DNS, public certificate issuance and the actual Coolify proxy remain deployment checks, as explicitly requested by the owner.
 
 ## Publication measurement
 
@@ -52,3 +52,7 @@ Peak process RSS was 238,960 KiB, including the TypeScript runner and both fixtu
 The Agent Pages skill passed the skill-creator validator in an isolated Python environment. Independent scenario review confirmed that updating an existing private site preserves visibility and identity, and that a lost response to an explicitly requested publication is retried with the original operation ID before reading current state.
 
 The implementation uses explicit parameterized SQLite queries and module-owned migrations, as recorded in ADR 0003. Nitro's pinned beta is a bounded exception to the initial stable-dependency preference; production build/native/browser tests cover its integration. The owner UI uses small accessible Tailwind components without an unused component-library dependency.
+
+## Independent review
+
+Separate Standards and Spec agents reviewed the implementation against the fixed documentation baseline. All five original Standards findings, all three Spec findings and the additional Standards cleanup follow-up are resolved. The final code revision is `cfbbc78`; see the [review record](review.md) for the separate axes and regression evidence. No remote deployment result is inferred from these reviews.

@@ -16,16 +16,18 @@ Use isolated fixtures and capture exact versions/results. Request real deploymen
 
 ## Acceptance
 
-- [ ] Codex and Claude Code each discover tools, create a private multipage site, read/change its stylesheet, preserve its identity and change visibility explicitly when requested.
-- [ ] Reconnect/retry, revoked-key failure and privacy behavior are demonstrated with both configurations; record client versions and any unsupported modes.
-- [ ] Production lint/type/build and all relevant domain, integration and browser checks pass.
-- [ ] Fresh non-root Docker startup, persistent restart, readiness/recovery and wildcard host/TLS routing work behind the intended Coolify proxy; record tested deployment details.
-- [ ] Cold backup restores to a fresh volume with the same owner, visibility, files and keys, and invalidates browser sessions.
-- [ ] Published documentation describes only verified functionality; remaining limitations are explicit.
-- [ ] All MVP acceptance boxes have evidence and the Agent Pages skill matches the implemented contract.
+- [x] Codex and Claude Code each discover tools, create a private multipage site, read/change its stylesheet, preserve its identity and change visibility explicitly when requested.
+- [x] Reconnect/retry, revoked-key failure and privacy behavior are demonstrated with both configurations; record client versions and any unsupported modes.
+- [x] Production lint/type/build and all relevant domain, integration and browser checks pass.
+- [x] Fresh non-root Docker startup, persistent restart and readiness/recovery work on isolated local volumes. Local production HTTPS tests verify wildcard host routing.
+- [ ] Verify wildcard DNS/TLS and routing through the intended Coolify proxy; record the actual deployment details. Deferred by the owner until domains and a target are chosen.
+- [x] Cold backup restores to a fresh volume with the same owner, visibility, files and keys, and invalidates browser sessions.
+- [x] Published documentation describes only verified functionality; remaining limitations are explicit.
+- [x] The Agent Pages skill matches the implemented contract and passes validation and scenario review.
+- [ ] Complete the remaining remote deployment acceptance before claiming full deployment verification.
 
 ## Verification
 
-Local application checks pass (87 tests, lint, typecheck), browser checks pass, and Docker/Compose restart/restore/private-state checks pass. Actual Codex/Claude workflows are recorded in docs/mcp-clients.md. Remote Coolify/DNS/TLS checks are intentionally deferred by the owner; the release acceptance remains open for that deployment boundary.
+Local application checks pass (90 tests, lint, typecheck), browser checks pass, and Docker/Compose restart/restore/private-state checks pass. Actual Codex/Claude workflows are recorded in docs/mcp-clients.md. Remote Coolify/DNS/TLS checks are intentionally deferred by the owner; the release acceptance remains open for that deployment boundary.
 
-Commands, exact versions and limitations: [local verification record](../verification.md). Final independent code review is in progress.
+Commands, exact versions and limitations: [local verification record](../verification.md). The independent Standards and Spec reviews have no open findings; see the [review record](../review.md).

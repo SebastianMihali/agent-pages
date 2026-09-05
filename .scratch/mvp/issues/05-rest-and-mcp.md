@@ -1,7 +1,7 @@
 # REST, MCP and binary upload adapters
 
 Status: ready-for-agent
-Progress: in-progress
+Progress: done
 Blocked by: 04
 
 ## Objective
@@ -16,17 +16,17 @@ Prepare client examples from [configuration evidence](../../../docs/mcp-clients.
 
 ## Acceptance
 
-- [ ] Every specified tool/route performs the same owner-authorized operation and returns equivalent domain results/errors.
-- [ ] Authentication and Origin rules apply to discovery and read operations as well as writes.
-- [ ] Cross-transport replay uses one operation receipt; schema errors never produce partial filesystem writes.
-- [ ] Missing/deleted-site retries, version conflicts, expiring cursors and unavailable revisions give actionable bounded errors.
-- [ ] Multipart streams reject oversize/duplicate/missing parts and publish all referenced files atomically.
-- [ ] MCP reads return bounded text or binary metadata without encoding large assets into the context.
-- [ ] An integration workflow creates a private site, uploads assets, reads/updates files, changes visibility explicitly and deletes it.
-- [ ] No MCP response contains an owner session, site grant or private access ticket.
+- [x] Every specified tool/route performs the same owner-authorized operation and returns equivalent domain results/errors.
+- [x] Authentication and Origin rules apply to discovery and read operations as well as writes.
+- [x] Cross-transport replay uses one operation receipt; schema errors never produce partial filesystem writes.
+- [x] Missing/deleted-site retries, version conflicts, expiring cursors and unavailable revisions give actionable bounded errors.
+- [x] Multipart streams reject oversize/duplicate/missing parts and publish all referenced files atomically.
+- [x] MCP reads return bounded text or binary metadata without encoding large assets into the context.
+- [x] An integration workflow creates a private site, uploads assets, reads/updates files, changes visibility explicitly and deletes it.
+- [x] No MCP response contains an owner session, site grant or private access ticket.
 
 ## Verification
 
 Twelve focused REST/MCP tests pass, with strict shared schemas, ordered multipart/trailer rejection, cross-transport replay and bounded reads. Production HTTPS MCP initialization/discovery/calls and structured version conflicts also pass.
 
-Commands, exact versions and limitations: [local verification record](../verification.md). Final independent code review is in progress.
+Commands, exact versions and limitations: [local verification record](../verification.md). The independent Standards and Spec findings for this scope are closed; see the [review record](../review.md).

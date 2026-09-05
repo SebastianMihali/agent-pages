@@ -20,7 +20,7 @@ The two axes were reviewed independently by separate agents. Remote deployment w
 2. **P2 — invalid-read lease leak:** path validation threw after acquiring a revision lease, outside release handling. The reviewer reproduced an invalid read followed by deletion that could not reclaim the tombstone until restart.
 3. **P2 — text replay required free staging space:** text creation/writes staged bytes before resolving a successful receipt. The reviewer reproduced a valid create retry failing at a coherent 1 MiB stored quota after other sites consumed space.
 
-No unrequested scope creep was found by the Spec axis. All eight findings have corresponding fixes and focused regression evidence. A follow-up review of the fixes is in progress.
+No unrequested scope creep was found by the Spec axis. All eight original findings have corresponding fixes and focused regression evidence. The Spec reviewer independently reran four focused regressions and closed all three findings at `f82ff38`. The Standards reviewer closed the original five findings, then identified one additional cleanup case during follow-up. It is resolved and independently re-reviewed through `cfbbc78`; neither axis has an open finding.
 
 
 ## Fixes and verification
@@ -34,4 +34,10 @@ No unrequested scope creep was found by the Spec axis. All eight findings have c
 - Spec 2: invalid file paths release acquired leases; deletion can reclaim content immediately afterward.
 - Spec 3: canonical text digests resolve existing receipts before quota/staging/version work. Full-quota and unwritable-staging regressions prove matching replay and changed-input conflict behavior.
 
-The updated application checks pass: lint, typecheck, 87 tests in 17 files. Final browser/container results and reviewer follow-up are recorded in the [verification record](verification.md).
+The updated application checks pass: lint, typecheck, 90 tests in 17 files. Final browser/container results are recorded in the [verification record](verification.md).
+
+## Standards follow-up: revision cleanup
+
+**Medium — failed revision reclamation:** cleanup of a delete-only work tree or an uncommitted final revision could replace the primary error and release storage accounting before physical removal. The fix groups every possible owned revision path under one reservation, retains it until all paths are removed, and tracks uploaded input bytes separately. Confirmed commits retain their files and transfer accounting to SQLite; pending cleanup blocks new revision creation while reads, matching text receipts and no-ops remain available.
+
+Three added regressions exercise real denied cleanup after database-trigger failures for create/write and a delete-only post-finalize failure. They verify primary errors, admission rejection, unchanged active state and successful reclamation/retry after permissions are restored. The focused site/lock suite passes 33 tests. The independent Standards follow-up reports this finding resolved with no remaining issue in scope.

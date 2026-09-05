@@ -1,7 +1,7 @@
 # Owner identity and management authentication
 
 Status: ready-for-agent
-Progress: in-progress
+Progress: done
 Blocked by: 01
 
 ## Objective
@@ -16,16 +16,16 @@ Provide the internal authorization/session operations needed by the later privat
 
 ## Acceptance
 
-- [ ] Fresh bootstrap creates exactly one stable owner, preserves identity on restart and handles configured username/password changes as specified.
-- [ ] Correct login succeeds; incorrect login and CSRF/origin failures are generic and rate-limited.
-- [ ] Session rotation, expiry, logout and startup invalidation work with injected time and isolated storage.
-- [ ] API keys are shown once, stored hashed, bounded in count and rejected immediately after revocation.
-- [ ] REST/MCP authentication ignores browser cookies; web handlers do not require a frontend API key.
-- [ ] Forged owner IDs and a synthetic other principal cannot access an owner's records.
-- [ ] Browser output, errors and logs contain no secret/session/ticket material beyond the explicit once-only key response.
+- [x] Fresh bootstrap creates exactly one stable owner, preserves identity on restart and handles configured username/password changes as specified.
+- [x] Correct login succeeds; incorrect login and CSRF/origin failures are generic and rate-limited.
+- [x] Session rotation, expiry, logout and startup invalidation work with injected time and isolated storage.
+- [x] API keys are shown once, stored hashed, bounded in count and rejected immediately after revocation.
+- [x] REST/MCP authentication ignores browser cookies; web handlers do not require a frontend API key.
+- [x] Forged owner IDs and a synthetic other principal cannot access an owner's records.
+- [x] Browser output, errors and logs contain no secret/session/ticket material beyond the explicit once-only key response.
 
 ## Verification
 
 Real SQLite auth tests cover stable identity, hash-only secrets, CSRF, rotation, expiry, throttling/challenge reuse and revocation. Browser tests cover once-only copy, no persistent browser key storage, login/logout and production cookies.
 
-Commands, exact versions and limitations: [local verification record](../verification.md). Final independent code review is in progress.
+Commands, exact versions and limitations: [local verification record](../verification.md). The independent Standards and Spec findings for this scope are closed; see the [review record](../review.md).

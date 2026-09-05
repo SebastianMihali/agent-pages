@@ -1,7 +1,7 @@
 # Site lifecycle and complete revision publication
 
 Status: ready-for-agent
-Progress: in-progress
+Progress: done
 Blocked by: 02
 
 ## Objective
@@ -16,17 +16,17 @@ Add site/revision/receipt migrations, manifests, per-site coordination, installa
 
 ## Acceptance
 
-- [ ] Initial content must include index.html; new sites are private and associated with the authenticated owner.
-- [ ] Writes/deletes publish one complete revision and preserve visibility; a visibility change advances metadata without copying content.
-- [ ] Interrupted preparation/finalization/commit and ENOSPC scenarios produce the specified recovery behavior and consistent counters.
-- [ ] Duplicate operations across restart return their receipt; mismatched IDs and competing expected versions produce the specified conflicts.
-- [ ] Creation, deletion retries after reclamation, expiration during writes and cleanup/read races are covered.
-- [ ] Traversal, symlinks, duplicate/colliding paths and quota oversubscription are rejected.
-- [ ] Restart reconciliation and a second-instance lock failure are tested against temporary data directories.
-- [ ] Record a small-site and near-limit full-revision preparation measurement with elapsed time, peak memory and staging disk use; optimize only if evidence requires it.
+- [x] Initial content must include index.html; new sites are private and associated with the authenticated owner.
+- [x] Writes/deletes publish one complete revision and preserve visibility; a visibility change advances metadata without copying content.
+- [x] Interrupted preparation/finalization/commit and ENOSPC scenarios produce the specified recovery behavior and consistent counters.
+- [x] Duplicate operations across restart return their receipt; mismatched IDs and competing expected versions produce the specified conflicts.
+- [x] Creation, deletion retries after reclamation, expiration during writes and cleanup/read races are covered.
+- [x] Traversal, symlinks, duplicate/colliding paths and quota oversubscription are rejected.
+- [x] Restart reconciliation and a second-instance lock failure are tested against temporary data directories.
+- [x] Record a small-site and near-limit full-revision preparation measurement with elapsed time, peak memory and staging disk use; optimize only if evidence requires it.
 
 ## Verification
 
 The storage/lock suite passes with no skipped fixture. It covers atomic publication, receipts, quota/concurrency, real process crashes/locks, symlinks, cleanup retry, expiry during writes, and corruption. ENOSPC is injected at the file-copy seam. Small/near-limit measurements are recorded centrally.
 
-Commands, exact versions and limitations: [local verification record](../verification.md). Final independent code review is in progress.
+Commands, exact versions and limitations: [local verification record](../verification.md). The independent Standards and Spec reviews have no open findings; see the [review record](../review.md).

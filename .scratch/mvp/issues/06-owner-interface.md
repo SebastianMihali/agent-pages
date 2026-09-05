@@ -1,7 +1,7 @@
 # Minimal owner web interface
 
 Status: ready-for-agent
-Progress: in-progress
+Progress: done
 Blocked by: 05
 
 ## Objective
@@ -16,16 +16,16 @@ Provide owned-site list/detail, clear visibility and expiry labels, open-site na
 
 ## Acceptance
 
-- [ ] Login/logout and session expiry have clear recoverable states.
-- [ ] Lists/details show only owned records, render untrusted names/paths as text and show useful empty/error/loading states.
-- [ ] Open Site follows the private handoff or opens public content without embedding it in the application origin.
-- [ ] Visibility changes are explicit and handle version conflicts without overwriting newer state.
-- [ ] API key display is once-only, copyable and absent from persisted browser state or page hydration.
-- [ ] Keyboard interaction, labels and narrow-screen layout are checked; no continuous polling or unnecessary subscriptions are introduced.
-- [ ] UI tests exercise user actions and outcomes rather than duplicating markup implementation.
+- [x] Login/logout and session expiry have clear recoverable states.
+- [x] Lists/details show only owned records, render untrusted names/paths as text and show useful empty/error/loading states.
+- [x] Open Site follows the private handoff or opens public content without embedding it in the application origin.
+- [x] Visibility changes are explicit and handle version conflicts without overwriting newer state.
+- [x] API key display is once-only, copyable and absent from persisted browser state or page hydration.
+- [x] Keyboard interaction, labels and narrow-screen layout are checked; no continuous polling or unnecessary subscriptions are introduced.
+- [x] UI tests exercise user actions and outcomes rather than duplicating markup implementation.
 
 ## Verification
 
 Chromium/Firefox UI workflows pass for login/logout, empty/error states, escaped site/file names, selected-site deep links, explicit visibility, once-only key copy/revoke and keyboard/mobile layout. Root inspected the safe desktop/mobile screenshots.
 
-Commands, exact versions and limitations: [local verification record](../verification.md). Final independent code review is in progress.
+Commands, exact versions and limitations: [local verification record](../verification.md). The independent Standards and Spec findings for this scope are closed; see the [review record](../review.md).

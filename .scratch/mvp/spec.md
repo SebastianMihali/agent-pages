@@ -1,6 +1,6 @@
 # Agent Pages — MVP contract
 
-Updated: 2026-09-05. Status: implementation in progress; verification evidence is recorded in the tickets.
+Updated: 2026-09-05. Status: local MVP implemented and verified; remote Coolify acceptance deferred by the owner. Evidence is recorded in the tickets and [verification record](verification.md).
 
 This file is the authoritative implementation contract. See the [product direction](../../agent-pages-spec.md), [glossary](../../CONTEXT.md) and [execution plan](plan.md) for scope, vocabulary and ordering.
 
@@ -229,22 +229,23 @@ Backup for the MVP is a documented cold backup: stop this installation cleanly, 
 
 Every box requires recorded evidence in its implementation ticket. A synthetic second owner tests authorization only; multi-account functionality remains out of scope. Browser security acceptance targets the current Chromium and Firefox versions pinned by the test runner; record versions in verification output.
 
-- [ ] A fresh install boots with the documented configuration and rejects missing/insecure production credentials or host settings.
-- [ ] A second process cannot open the same live data directory.
-- [ ] Login, logout, personal key creation and immediate key revocation work without secret leakage.
-- [ ] Both selected MCP clients create a private multipage site and update the same URL.
-- [ ] Anonymous requests and a synthetic other principal cannot read private HTML, CSS, JS, images, fonts, HEAD, custom 404 or management data.
-- [ ] A logged-in owner can open private content with a site-specific grant; wrong-site/reused/expired tickets and grants are rejected.
-- [ ] An adversarial public site cannot read application responses or another private site's assets in the same authenticated browser, including fetch, embedding, workers and legacy origin-relaxation attempts.
-- [ ] New sites are private, writes preserve visibility, explicit public exposure permits anonymous reads, and reverting to private denies subsequent anonymous requests.
-- [ ] A failed/interrupted batch leaves the old revision active; a restart after commit recovers the successful idempotent response.
-- [ ] Concurrent updates produce a success and a version conflict, with no lost update or quota oversubscription.
-- [ ] Traversal, encoding tricks, symlinks, duplicate paths and file/directory collisions are rejected through actual HTTP as well as validators.
-- [ ] Text/binary writes, nested routing, canonical redirects, site 404, HEAD and MIME work with streaming and no-store headers.
-- [ ] Limits reject oversized or excessive work during streaming and account for staging and retired revisions.
-- [ ] Expiration denies reads before physical cleanup; deletion and cleanup survive failures and restarts.
-- [ ] Production build, targeted lint/type checks and relevant integration/browser tests pass.
-- [ ] Docker build, non-root runtime, persistence, wildcard routing/TLS through the intended proxy and cold backup/restore are verified.
+- [x] A fresh install boots with the documented configuration and rejects missing/insecure production credentials or host settings.
+- [x] A second process cannot open the same live data directory.
+- [x] Login, logout, personal key creation and immediate key revocation work without secret leakage.
+- [x] Both selected MCP clients create a private multipage site and update the same URL.
+- [x] Anonymous requests and a synthetic other principal cannot read private HTML, CSS, JS, images, fonts, HEAD, custom 404 or management data.
+- [x] A logged-in owner can open private content with a site-specific grant; wrong-site/reused/expired tickets and grants are rejected.
+- [x] An adversarial public site cannot read application responses or another private site's assets in the same authenticated browser, including fetch, embedding, workers and legacy origin-relaxation attempts.
+- [x] New sites are private, writes preserve visibility, explicit public exposure permits anonymous reads, and reverting to private denies subsequent anonymous requests.
+- [x] A failed/interrupted batch leaves the old revision active; a restart after commit recovers the successful idempotent response.
+- [x] Concurrent updates produce a success and a version conflict, with no lost update or quota oversubscription.
+- [x] Traversal, encoding tricks, symlinks, duplicate paths and file/directory collisions are rejected through actual HTTP as well as validators.
+- [x] Text/binary writes, nested routing, canonical redirects, site 404, HEAD and MIME work with streaming and no-store headers.
+- [x] Limits reject oversized or excessive work during streaming and account for staging and retired revisions.
+- [x] Expiration denies reads before physical cleanup; deletion and cleanup survive failures and restarts.
+- [x] Production build, targeted lint/type checks and relevant integration/browser tests pass.
+- [x] Local Docker build, non-root runtime, persistence, isolated HTTPS host routing and cold backup/restore are verified.
+- [ ] Wildcard DNS/TLS and routing through the intended Coolify proxy are verified. Deferred by the owner until deployment references are chosen.
 
 ## Source checks
 
@@ -252,4 +253,4 @@ Consulted on 2026-09-05; dependency APIs are rechecked when versions are selecte
 
 - [TanStack server entry](https://tanstack.com/start/latest/docs/framework/react/guide/server-entry-point): fetch-based integration point.
 - [Official MCP TypeScript SDK](https://ts.sdk.modelcontextprotocol.io/server) and [HTTP transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports): transport lifecycle and security requirements.
-- [Client configuration evidence](../../docs/mcp-clients.md): both target clients and the remaining live checks.
+- [Client configuration evidence](../../docs/mcp-clients.md): both target clients, reconnect/credential checks and the boundary between live CLI and production HTTPS evidence.

@@ -2,7 +2,7 @@
 
 Self-hosted static hosting for coding agents. Create a site, receive a stable URL and update its files through MCP or REST.
 
-**Status:** the first single-owner implementation is available in this repository. Local release verification is in progress; deployment through the intended Coolify proxy is still unverified. There is no published Docker image.
+**Status:** the single-owner MVP is implemented and locally verified, including real Codex/Claude Code workflows, Chromium/Firefox isolation, Docker persistence and cold restore. See the [verification record](.scratch/mvp/verification.md). Deployment through the intended Coolify proxy is deferred until domains and a target are chosen. There is no published Docker image.
 
 Sites start private to their owner. An explicit visibility change makes a site public, and it can be made private again. The application and each site's uploaded code run on separate browser origins. Private sharing, multiple accounts, ZIP uploads, browser editing, SPA fallback and rollback are outside this MVP.
 
