@@ -2,7 +2,7 @@
 
 Self-hosted static hosting for coding agents. Create a site, receive a stable URL and update its files through MCP or REST.
 
-**Status:** the single-owner MVP is implemented and locally verified, including real Codex/Claude Code workflows, Chromium/Firefox isolation, Docker persistence and cold restore. See the [verification record](.scratch/mvp/verification.md). Deployment through the intended Coolify proxy is deferred until domains and a target are chosen. There is no published Docker image.
+**Status:** the single-owner MVP is implemented and locally verified, including real Codex/Claude Code workflows, Chromium/Firefox isolation, Docker persistence and cold restore. See the [verification record](.scratch/mvp/verification.md). Deployment through the intended Coolify proxy is deferred until domains and a target are chosen. Release tags publish a multi-arch image to GHCR through the [release workflow](.github/workflows/release.yml); no release has been tagged yet.
 
 Sites start private to their owner. An explicit visibility change makes a site public, and it can be made private again. The application and each site's uploaded code run on separate browser origins. Private sharing, multiple accounts, ZIP uploads, browser editing, SPA fallback and rollback are outside this MVP.
 
@@ -34,4 +34,4 @@ Production requires HTTPS, an application hostname and wildcard site hostnames. 
 - [Domain glossary](CONTEXT.md)
 - [Agent Pages skill](skills/agent-pages/SKILL.md)
 
-The [original specification](docs/archive/agent-pages-spec-original.md) is historical context, not the implementation contract. A license must be selected before external distribution.
+The [original specification](docs/archive/agent-pages-spec-original.md) is historical context, not the implementation contract. Agent Pages is released under the [MIT License](LICENSE).

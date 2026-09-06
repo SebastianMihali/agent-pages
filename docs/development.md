@@ -49,6 +49,14 @@ Playwright builds the production bundle and owns the HTTPS fixture process. The 
 
 Storage and recovery tests use actual temporary SQLite databases and file trees. They inject time and bounded filesystem failure points, and use child-process termination for restart-sensitive publication and installation-lock behavior. A synthetic second principal establishes owner isolation without adding account provisioning.
 
+## Continuous integration
+
+Pull requests and pushes to `main` run the [ci workflow](../.github/workflows/ci.yml): lint, typecheck, unit/integration tests and the production build; the Playwright suite on Chromium and Firefox against the same HTTPS fixture used locally, with traces uploaded on failure; and an amd64 container build without a push. `main` requires a pull request with these checks passing.
+
+Semver tags matching `v*.*.*` run the [release workflow](../.github/workflows/release.yml), which builds the image for `linux/amd64` and `linux/arm64` with QEMU and publishes it to `ghcr.io/<owner>/agent-pages` with the version, `major.minor` and `latest` tags, using only the workflow's `GITHUB_TOKEN`. The published digest appears in the run summary.
+
+The browser job relies on the runner resolving `*.localhost` names to loopback and on `openssl` for the one-day fixture certificate. Both hold on GitHub's Ubuntu images; verify them again after changing the runner image.
+
 ## Runtime and native dependencies
 
 `better-sqlite3` and `fs-ext` contain native code. A clean install therefore needs a supported prebuilt binary or Python, Make, and a C++ compiler. The Docker build stage installs those tools and compiles the modules for its Linux architecture. Do not copy host `node_modules` into a container image.
