@@ -15,6 +15,73 @@ Prepare:
 
 Run exactly one replica. Advisory locking makes a second process on the same local volume fail startup, but replication and network-mounted storage are outside the supported storage model.
 
+## DNS and certificates
+
+Agent Pages does not need a whole domain. It needs the application hostname plus one delegated subdomain for content; the rest of a domain shared with other projects is untouched.
+
+Pick a content zone such as `sites.example.com`. `*.sites.example.com` only ever matches names under that one label; it does not create or affect any other record on `example.com`, including `www.example.com` or another project's subdomain on the same domain.
+
+Exactly two DNS records point at the reverse proxy:
+
+- the application host, `app.example.com`;
+- the wildcard content host, `*.sites.example.com`.
+
+A wildcard certificate can only be issued through the ACME DNS-01 challenge, because a single HTTP request cannot prove control of every possible subdomain the way it proves control of one host. Traefik's own reference documentation states this plainly: "wildcard certificates can only be generated through a DNS-01 challenge" ([Traefik, ACME certificate resolver reference, "Wildcard Domains"](https://doc.traefik.io/traefik/reference/install-configuration/tls/certificate-resolvers/acme/), v3.7 docs, accessed 2026-09-06). HTTP-01, the challenge Coolify's bundled proxy uses by default, cannot issue one.
+
+DNS-01 means the proxy itself needs API credentials for your DNS provider, scoped to creating and deleting `TXT` records under `_acme-challenge.<zone>`. Store that credential like any other production secret: it can write DNS records, not just read them.
+
+### Coolify configuration path (Cloudflare example)
+
+The steps below are taken from current Coolify and Traefik documentation and have not been exercised on a real Coolify deployment for this project. Re-check them against the linked pages before relying on them, since both projects ship frequent releases.
+
+1. **Create a Cloudflare API token**, not the legacy global API key. Lego, the ACME library Traefik uses, accepts one token scoped to `Zone / Zone / Read` and `Zone / DNS / Edit` on the zone, or two split tokens (`CF_ZONE_API_TOKEN` for zone lookup, `CF_DNS_API_TOKEN` for record edits) ([go-acme/lego, Cloudflare DNS provider](https://go-acme.github.io/lego/dns/cloudflare/), accessed 2026-09-06).
+
+2. **Switch the Coolify proxy from HTTP-01 to DNS-01.** In Coolify, open `Servers → your server → Proxy` and edit the Traefik `docker-compose` there, adding the provider's environment variable and the `dnschallenge` command flags. Coolify's documented Cloudflare example is:
+
+   ```yaml
+   services:
+     traefik:
+       image: 'traefik:v3.6'
+       environment:
+         - CF_DNS_API_TOKEN=<Cloudflare API Token>
+       command:
+         - '--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare'
+         - '--certificatesresolvers.letsencrypt.acme.dnschallenge.delaybeforecheck=0'
+         - '--certificatesresolvers.letsencrypt.acme.storage=/traefik/acme.json'
+   ```
+
+   ([Coolify docs, "DNS Challenge"](https://coolify.io/docs/knowledge-base/proxy/traefik/dns-challenge), accessed 2026-09-06). Restart the proxy after saving. Coolify's own example leaves the existing `httpchallenge` command flags in place alongside the new `dnschallenge` ones; confirm on the live page whether the current Coolify release still expects that.
+
+3. **Request the wildcard certificate.** Coolify documents adding labels to the proxy's own `traefik` service so it requests one certificate covering both the content zone and its wildcard:
+
+   ```yaml
+   labels:
+     - traefik.http.routers.traefik.tls.certresolver=letsencrypt
+     - traefik.http.routers.traefik.tls.domains[0].main=sites.example.com
+     - traefik.http.routers.traefik.tls.domains[0].sans=*.sites.example.com
+   ```
+
+   ([Coolify docs, "Wildcard SSL Certificates"](https://coolify.io/docs/knowledge-base/proxy/traefik/wildcard-certs), accessed 2026-09-06). Once issued, Traefik reuses this certificate for any router whose TLS SNI falls under `*.sites.example.com`, with no separate ACME round trip per site hostname.
+
+4. **Route the application host normally.** Set the Agent Pages application's Domain field in Coolify to `https://app.example.com`. This is Coolify's documented "Normal" case: one resource on one subdomain, reusing the now wildcard-capable resolver (same source as step 3).
+
+5. **Route the wildcard content host to the same application.** Leave the Domain field limited to the app host and add custom Traefik labels so every `*.sites.example.com` request reaches the same container on port `3000`, following Coolify's documented pattern for routing every subdomain to one application:
+
+   ```yaml
+   labels:
+     - traefik.http.routers.agent-pages-sites.rule=HostRegexp(`^.+\.sites\.example\.com$`)
+     - traefik.http.routers.agent-pages-sites.entryPoints=https
+     - traefik.http.routers.agent-pages-sites.tls.certresolver=letsencrypt
+     - traefik.http.routers.agent-pages-sites.service=agent-pages-sites
+     - traefik.http.services.agent-pages-sites.loadbalancer.server.port=3000
+   ```
+
+   (same source as step 3; label syntax shown is for Traefik v3). Add an equivalent HTTP-to-HTTPS redirect router if the proxy does not already force HTTPS globally.
+
+6. Confirm `/health/ready` succeeds through both hostnames before enabling traffic, as described under [Container build and launch](#container-build-and-launch).
+
+Steps 2 through 5 are documentation-derived, not verified against a live Coolify instance for this project; treat the exact flag and label names as a starting point.
+
 ## Credentials and configuration
 
 Generate the password hash from a checked-out release in an interactive terminal:

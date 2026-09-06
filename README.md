@@ -24,7 +24,7 @@ pnpm dev
 
 Open `http://app.agent-pages.localhost:3000`, sign in and create a labeled API key for each agent client. Use the [MCP client setup](docs/mcp-clients.md) to connect Codex or Claude Code. Initial site creation and uploads use MCP/REST; the web interface lists sites, opens private content and manages visibility and keys.
 
-Production requires HTTPS, an application hostname and wildcard site hostnames. See [development and validation](docs/development.md) and [container, proxy and backup operations](docs/operations.md). Production data belongs on one local persistent volume with one application process.
+Production requires HTTPS, an application hostname and a wildcard on one delegated content subdomain such as `sites.example.com`; the rest of a shared domain stays untouched, and the wildcard certificate needs the DNS-01 challenge. See [development and validation](docs/development.md) and [container, proxy and backup operations](docs/operations.md). Production data belongs on one local persistent volume with one application process.
 
 ## Project references
 

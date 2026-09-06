@@ -1,7 +1,7 @@
 # Self-host DNS and certificate guidance
 
 Status: ready-for-agent
-Progress: open
+Progress: done
 Blocked by: —
 
 ## Objective
@@ -21,10 +21,10 @@ Use primary sources and record the consulted versions and dates. Do not change a
 
 ## Acceptance
 
-- [ ] A self-hoster with an existing domain can follow the document to the point of a working wildcard route without reading the ADR.
-- [ ] Every proxy or provider step cites its source and version.
-- [ ] The alternative-model note exists and links to the ADR it did not replace.
+- [x] A self-hoster with an existing domain can follow the document to the point of a working wildcard route without reading the ADR.
+- [x] Every proxy or provider step cites its source and version.
+- [x] The alternative-model note exists and links to the ADR it did not replace.
 
 ## Verification
 
-List consulted sources and note which steps were exercised on a real Coolify instance, if any.
+2026-09-06: `docs/operations.md` gained a "DNS and certificates" section with the two-record model, the DNS-01 requirement and a cited Coolify/Traefik/Cloudflare configuration path; `docs/single-hostname-alternative.md` records the rejected CSP sandbox model and links ADR 0001; the README production sentence was adjusted. Sources: Traefik ACME reference (v3.7 docs), go-acme/lego Cloudflare provider page, Coolify "DNS Challenge" and "Wildcard SSL Certificates" pages, all accessed 2026-09-06. No step was exercised on a real Coolify instance; the document says so.
