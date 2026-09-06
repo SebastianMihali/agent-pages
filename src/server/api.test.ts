@@ -78,6 +78,26 @@ describe('authenticated REST site operations', () => {
     expect(await (await send(base, 'DELETE', command)).json()).toEqual(deleted)
   })
 
+  it('changes expiration with optimistic concurrency and rejects invalid input', async () => {
+    const { send } = await fixture()
+    const created = await (await send('/api/sites', 'POST', { operationId: crypto.randomUUID(), name: 'Expiration route',
+      expiresInSeconds: null, files: [{ path: 'index.html', content: 'live' }] })).json()
+    const endpoint = `/api/sites/${created.site.id}/expiration`
+    const changed = await send(endpoint, 'PUT', { operationId: crypto.randomUUID(), expectedVersion: 1, expiresInSeconds: 86_400 })
+    expect(changed.status).toBe(200)
+    expect((await changed.json()).site).toMatchObject({ version: 2 })
+    const conflict = await send(endpoint, 'PUT', { operationId: crypto.randomUUID(), expectedVersion: 1, expiresInSeconds: null })
+    expect(conflict.status).toBe(409)
+    expect(await conflict.json()).toMatchObject({ error: { code: 'VERSION_CONFLICT', details: { currentVersion: 2 } } })
+    for (const body of [
+      { operationId: crypto.randomUUID(), expectedVersion: 2, expiresInSeconds: 59 },
+      { operationId: crypto.randomUUID(), expectedVersion: 2, expiresInSeconds: null, unexpected: true },
+    ]) expect((await send(endpoint, 'PUT', body)).status).toBe(400)
+    const wrongMethod = await send(endpoint, 'POST', {})
+    expect(wrongMethod.status).toBe(405)
+    expect(wrongMethod.headers.get('allow')).toBe('PUT')
+  })
+
   it('streams manifest-ordered text and binary multipart parts into one private publication', async () => {
     const { send, handle, config, key } = await fixture()
     const created = await (await send('/api/sites', 'POST', { operationId: crypto.randomUUID(), name: 'Multipart',

@@ -6,12 +6,12 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseConfig } from '../config'
-import { createSiteModule, type SiteModule } from '.'
+import { createSiteModule, type SiteModule, type SiteModuleOptions } from '.'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
 
-async function fixture(overrides: Record<string, string> = {}) {
+async function fixture(overrides: Record<string, string> = {}, options: SiteModuleOptions = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-pages-sites-'))
   roots.push(dataDir)
   const config = parseConfig({
@@ -23,7 +23,7 @@ async function fixture(overrides: Record<string, string> = {}) {
   const sql = new Database(join(dataDir, 'database.sqlite'))
   sql.pragma('foreign_keys = ON')
   const database = { sql, close: () => sql.close() }
-  const sites = await createSiteModule(config, database)
+  const sites = await createSiteModule(config, database, options)
   return { dataDir, sql, sites, owner: { ownerId: 'owner-1' } }
 }
 
@@ -32,6 +32,187 @@ async function text(file: Awaited<ReturnType<SiteModule['openOwnedFile']>>) {
 }
 
 describe('complete site revisions', () => {
+  it('applies the seven-day owner default when creation omits expiration', async () => {
+    const instant = new Date('2026-01-01T00:00:00Z')
+    const { sites, sql, owner } = await fixture({}, { now: () => instant })
+    const created = await sites.createSite(owner, {
+      operationId: crypto.randomUUID(), name: 'Default expiration', files: [{ path: 'index.html', content: 'temporary' }],
+    })
+    expect(created.site.expiresAt).toBe('2026-01-08T00:00:00.000Z')
+    await sites.close(); sql.close()
+  })
+
+  it('gets and sets the owner expiration default and rejects values outside the preset allowlist', async () => {
+    const { sites, sql, owner } = await fixture()
+    expect(await sites.getOwnerSettings(owner)).toEqual({ defaultExpiresInSeconds: 604_800 })
+    expect(await sites.setOwnerSettings(owner, { defaultExpiresInSeconds: null })).toEqual({ defaultExpiresInSeconds: null })
+    expect(await sites.getOwnerSettings(owner)).toEqual({ defaultExpiresInSeconds: null })
+    expect(await sites.setOwnerSettings(owner, { defaultExpiresInSeconds: 86_400 })).toEqual({ defaultExpiresInSeconds: 86_400 })
+    await expect(sites.setOwnerSettings(owner, { defaultExpiresInSeconds: 60 })).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    await sites.close(); sql.close()
+  })
+
+  it('applies the current owner default while explicit null and numbers take precedence', async () => {
+    const instant = new Date('2026-01-01T00:00:00Z')
+    const { sites, sql, owner } = await fixture({}, { now: () => instant })
+    await sites.setOwnerSettings(owner, { defaultExpiresInSeconds: 86_400 })
+    const inherited = await sites.createSite(owner, {
+      operationId: crypto.randomUUID(), name: 'Inherited', files: [{ path: 'index.html', content: 'one day' }],
+    })
+    const never = await sites.createSite(owner, {
+      operationId: crypto.randomUUID(), name: 'Never', expiresInSeconds: null, files: [{ path: 'index.html', content: 'forever' }],
+    })
+    const explicit = await sites.createSite(owner, {
+      operationId: crypto.randomUUID(), name: 'Explicit', expiresInSeconds: 120, files: [{ path: 'index.html', content: 'briefly' }],
+    })
+    expect(inherited.site.expiresAt).toBe('2026-01-02T00:00:00.000Z')
+    expect(never.site.expiresAt).toBeNull()
+    expect(explicit.site.expiresAt).toBe('2026-01-01T00:02:00.000Z')
+    await sites.close(); sql.close()
+  })
+
+  it('replays an omitted-expiration creation after the owner default changes', async () => {
+    const { sites, sql, owner } = await fixture()
+    const command = { operationId: crypto.randomUUID(), name: 'Stable default', files: [{ path: 'index.html', content: 'same' }] }
+    const created = await sites.createSite(owner, command)
+    await sites.setOwnerSettings(owner, { defaultExpiresInSeconds: 86_400 })
+    expect(await sites.createSite(owner, command)).toEqual(created)
+    await expect(sites.createSite(owner, { ...command, files: [{ path: 'index.html', content: 'changed' }] }))
+      .rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+    await sites.close(); sql.close()
+  })
+
+  it('resolves an omitted owner default at the creation commit boundary', async () => {
+    const { dataDir, sites, sql, owner } = await fixture()
+    await sites.close(); sql.close()
+    const config = parseConfig({ NODE_ENV: 'test', APP_ORIGIN: 'https://app.example.com', CONTENT_BASE_DOMAIN: 'sites.example.com', DATA_DIR: dataDir,
+      ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'aa'.repeat(16)}$${'bb'.repeat(32)}`, MIN_FREE_DISK_MB: '1' })
+    const reopened = new Database(join(dataDir, 'database.sqlite')); const instant = new Date('2026-01-01T00:00:00Z')
+    const active: { module?: SiteModule } = {}; let changeDefault = true
+    const module = await createSiteModule(config, { sql: reopened, close: () => reopened.close() }, { now: () => instant,
+      async fault(point) {
+        if (changeDefault && point === 'after-finalize') {
+          changeDefault = false
+          if (!active.module) throw new Error('Site module is unavailable')
+          await active.module.setOwnerSettings(owner, { defaultExpiresInSeconds: 86_400 })
+        }
+      },
+    })
+    active.module = module
+    const created = await module.createSite(owner, {
+      operationId: crypto.randomUUID(), name: 'Commit default', files: [{ path: 'index.html', content: 'one day' }],
+    })
+    expect(created.site.expiresAt).toBe('2026-01-02T00:00:00.000Z')
+    await module.close(); reopened.close()
+  })
+
+  it('extends, shortens and removes a site expiration with version increments', async () => {
+    let instant = new Date('2026-01-01T00:00:00Z')
+    const { sites, sql, owner } = await fixture({}, { now: () => instant })
+    const created = await sites.createSite(owner, {
+      operationId: crypto.randomUUID(), name: 'Mutable expiration', files: [{ path: 'index.html', content: 'temporary' }],
+    })
+    const extended = await sites.setExpiration(owner, {
+      operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, expiresInSeconds: 2_592_000,
+    })
+    expect(extended.site).toMatchObject({ version: 2, expiresAt: '2026-01-31T00:00:00.000Z' })
+    instant = new Date('2026-01-01T00:01:00Z')
+    const shortened = await sites.setExpiration(owner, {
+      operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 2, expiresInSeconds: 60,
+    })
+    expect(shortened.site).toMatchObject({ version: 3, expiresAt: '2026-01-01T00:02:00.000Z' })
+    const removed = await sites.setExpiration(owner, {
+      operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 3, expiresInSeconds: null,
+    })
+    expect(removed.site).toMatchObject({ version: 4, expiresAt: null })
+    await sites.close(); sql.close()
+  })
+
+  it('records a no-op expiration receipt without changing version or timestamps', async () => {
+    const instant = new Date('2026-01-01T00:00:00Z')
+    const { sites, sql, owner } = await fixture({}, { now: () => instant })
+    const created = await sites.createSite(owner, {
+      operationId: crypto.randomUUID(), name: 'Same expiration', files: [{ path: 'index.html', content: 'unchanged' }],
+    })
+    const command = { operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, expiresInSeconds: 604_800 }
+    const unchanged = await sites.setExpiration(owner, command)
+    expect(unchanged.site).toMatchObject({ version: 1, updatedAt: created.site.updatedAt, expiresAt: created.site.expiresAt })
+    expect(await sites.setExpiration(owner, command)).toEqual(unchanged)
+    await sites.close(); sql.close()
+  })
+
+  it('orders expiration ownership, receipt, version and terminal lifecycle checks', async () => {
+    let instant = new Date('2026-01-01T00:00:00Z')
+    const { sites, sql, owner } = await fixture({}, { now: () => instant })
+    const created = await sites.createSite(owner, {
+      operationId: crypto.randomUUID(), name: 'Expiration checks', expiresInSeconds: null, files: [{ path: 'index.html', content: 'live' }],
+    })
+    await expect(sites.setExpiration({ ownerId: 'other-owner' }, {
+      operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, expiresInSeconds: 60,
+    })).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(sites.setExpiration(owner, {
+      operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 2, expiresInSeconds: 60,
+    })).rejects.toMatchObject({ code: 'VERSION_CONFLICT', details: { currentVersion: 1 } })
+    const command = { operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, expiresInSeconds: 60 }
+    const shortened = await sites.setExpiration(owner, command)
+    const removed = await sites.setExpiration(owner, {
+      operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 2, expiresInSeconds: null,
+    })
+    expect(await sites.setExpiration(owner, command)).toEqual(shortened)
+    expect(await sites.getSite(owner, created.site.id)).toEqual(removed.site)
+    const expiring = await sites.createSite(owner, {
+      operationId: crypto.randomUUID(), name: 'Terminal', expiresInSeconds: 60, files: [{ path: 'index.html', content: 'ending' }],
+    })
+    instant = new Date('2026-01-01T00:01:01Z')
+    await expect(sites.setExpiration(owner, {
+      operationId: crypto.randomUUID(), siteId: expiring.site.id, expectedVersion: 1, expiresInSeconds: null,
+    })).rejects.toMatchObject({ code: 'SITE_EXPIRED' })
+    const deletedSite = await sites.createSite(owner, {
+      operationId: crypto.randomUUID(), name: 'Tombstone', expiresInSeconds: null, files: [{ path: 'index.html', content: 'deleted' }],
+    })
+    const deleted = await sites.deleteSite(owner, { operationId: crypto.randomUUID(), siteId: deletedSite.site.id, expectedVersion: 1 })
+    await expect(sites.setExpiration(owner, {
+      operationId: crypto.randomUUID(), siteId: deletedSite.site.id, expectedVersion: deleted.version, expiresInSeconds: null,
+    })).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await sites.close(); sql.close()
+  })
+
+  it('denies visitors after a site is shortened to the minimum expiration and the clock passes it', async () => {
+    let instant = new Date('2026-01-01T00:00:00Z')
+    const { sites, sql, owner } = await fixture({}, { now: () => instant })
+    const created = await sites.createSite(owner, {
+      operationId: crypto.randomUUID(), name: 'Short-lived', expiresInSeconds: null, files: [{ path: 'index.html', content: 'briefly public' }],
+    })
+    const visible = await sites.setVisibility(owner, {
+      operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, visibility: 'public',
+    })
+    await sites.setExpiration(owner, {
+      operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: visible.site.version, expiresInSeconds: 60,
+    })
+    instant = new Date('2026-01-01T00:01:01Z')
+    await expect(sites.acquireActiveRevision(created.site.id)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await sites.close(); sql.close()
+  })
+
+  it('migrates owner settings into an existing site database without changing site expiration', async () => {
+    const instant = new Date('2026-01-01T00:00:00Z')
+    const { dataDir, sites, sql, owner } = await fixture({}, { now: () => instant })
+    const created = await sites.createSite(owner, {
+      operationId: crypto.randomUUID(), name: 'Before settings', expiresInSeconds: 120, files: [{ path: 'index.html', content: 'preserved' }],
+    })
+    await sites.close()
+    sql.exec("DROP TABLE owner_settings; DELETE FROM __migrations WHERE name='0004_owner_settings'")
+    sql.close()
+    const config = parseConfig({ NODE_ENV: 'test', APP_ORIGIN: 'https://app.example.com', CONTENT_BASE_DOMAIN: 'sites.example.com', DATA_DIR: dataDir,
+      ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'aa'.repeat(16)}$${'bb'.repeat(32)}`, MIN_FREE_DISK_MB: '1' })
+    const reopened = new Database(join(dataDir, 'database.sqlite'))
+    const migrated = await createSiteModule(config, { sql: reopened, close: () => reopened.close() }, { now: () => instant })
+    expect(await migrated.getOwnerSettings(owner)).toEqual({ defaultExpiresInSeconds: 604_800 })
+    expect((await migrated.getSite(owner, created.site.id)).expiresAt).toBe(created.site.expiresAt)
+    expect(reopened.prepare("SELECT name FROM __migrations WHERE name='0004_owner_settings'").get()).toEqual({ name: '0004_owner_settings' })
+    await migrated.close(); reopened.close()
+  })
+
   it('creates a private site and publishes an update at one stable identity', async () => {
     const { sites, sql, owner } = await fixture()
     const created = await sites.createSite(owner, {

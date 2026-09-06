@@ -13,8 +13,9 @@ import { siteOrigin } from '../hosts'
 import { audit } from '../audit'
 import type {
   CreateResult, DeleteResult, FileInput, FileMutationResult, ManifestEntry, RevisionLease,
-  SiteModule, SiteModuleOptions, SiteView, VisibilityResult,
+  SiteModule, SiteModuleOptions, SiteMutationResult, SiteView,
 } from '.'
+import { allowedDefaultExpiresInSeconds, initialDefaultExpiresInSeconds } from './expiration'
 
 const receiptLifetimeMs = 24 * 60 * 60 * 1000
 const pathLimitBytes = 512
@@ -39,6 +40,7 @@ type SiteRow = {
 }
 type ReceiptRow = { fingerprint_sha256: string; result_json: string }
 type ReceiptHeader = { kind: string; target_site_id: string | null }
+type CreateReceiptRow = { kind: string; result_json: string }
 type StoredManifest = { revisionId: string; files: ManifestEntry[] }
 
 class Mutex {
@@ -115,6 +117,12 @@ function migrate(sql: AppDatabase['sql']) {
       PRIMARY KEY(owner_id,operation_id));
     CREATE INDEX IF NOT EXISTS site_operation_receipts_expiry ON site_operation_receipts(expires_at_ms);
     INSERT OR IGNORE INTO __migrations(name) VALUES ('0003_site_publication');
+    CREATE TABLE IF NOT EXISTS owner_settings (
+      owner_id TEXT PRIMARY KEY, default_expires_in_seconds INTEGER,
+      updated_at_ms INTEGER NOT NULL,
+      CHECK(default_expires_in_seconds IS NULL OR default_expires_in_seconds IN (86400,604800,2592000))
+    );
+    INSERT OR IGNORE INTO __migrations(name) VALUES ('0004_owner_settings');
   `)
 }
 
@@ -439,14 +447,40 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       })
   }
 
+  const ownerSettings = (ownerId: string) => {
+    const row = sql.prepare('SELECT default_expires_in_seconds AS defaultExpiresInSeconds FROM owner_settings WHERE owner_id=?')
+      .get(ownerId) as { defaultExpiresInSeconds: number | null } | undefined
+    return row ?? { defaultExpiresInSeconds: initialDefaultExpiresInSeconds }
+  }
+  const getOwnerSettings: SiteModule['getOwnerSettings'] = async (principal) => ownerSettings(principal.ownerId)
+  const setOwnerSettings: SiteModule['setOwnerSettings'] = async (principal, settings) => {
+    if (!allowedDefaultExpiresInSeconds.has(settings.defaultExpiresInSeconds)) {
+      throw new DomainError('INVALID_INPUT', 'Default expiration must be 86400, 604800, 2592000 seconds or null')
+    }
+    await revisionGate.run(async () => sql.prepare(`INSERT INTO owner_settings(owner_id,default_expires_in_seconds,updated_at_ms) VALUES (?,?,?)
+      ON CONFLICT(owner_id) DO UPDATE SET default_expires_in_seconds=excluded.default_expires_in_seconds,updated_at_ms=excluded.updated_at_ms`)
+      .run(principal.ownerId, settings.defaultExpiresInSeconds, now()))
+    return { defaultExpiresInSeconds: settings.defaultExpiresInSeconds }
+  }
+
   const createSite: SiteModule['createSite'] = (principal, command) => mutation(principal, command.operationId, undefined, async () => {
     const name = command.name.trim()
     if (!name || name.length > 100) throw new DomainError('INVALID_INPUT', 'Site name must contain 1 to 100 characters')
-    const expires = command.expiresInSeconds ?? null
-    if (expires !== null && (!Number.isInteger(expires) || expires < 60 || expires > 2_592_000)) throw new DomainError('INVALID_INPUT', 'Expiration must be between 60 and 2592000 seconds')
+    const requestedExpires = command.expiresInSeconds
+    if (requestedExpires !== undefined && requestedExpires !== null && (!Number.isInteger(requestedExpires) || requestedExpires < 60 || requestedExpires > 2_592_000)) {
+      throw new DomainError('INVALID_INPUT', 'Expiration must be between 60 and 2592000 seconds')
+    }
+    const stored = sql.prepare('SELECT kind,result_json FROM site_operation_receipts WHERE owner_id=? AND operation_id=?')
+      .get(principal.ownerId, command.operationId) as CreateReceiptRow | undefined
+    if (stored && stored.kind !== 'create') throw new DomainError('IDEMPOTENCY_CONFLICT', 'Operation ID was already used with different input')
+    const storedResult = stored ? JSON.parse(stored.result_json) as CreateResult : undefined
+    const storedExpires = storedResult?.site.expiresAt === null ? null : storedResult
+      ? (Date.parse(storedResult.site.expiresAt!) - Date.parse(storedResult.site.createdAt)) / 1000
+      : undefined
+    const replayExpires = requestedExpires === undefined ? storedExpires : requestedExpires
     const immediateEntries = textManifestEntries(command.files)
-    if (immediateEntries) {
-      const immediateFingerprint = stableFingerprint({ kind: 'create', name, expires, files: digestPairs(immediateEntries) })
+    if (immediateEntries && stored) {
+      const immediateFingerprint = stableFingerprint({ kind: 'create', name, expires: replayExpires, files: digestPairs(immediateEntries) })
       const existing = receipt(principal.ownerId, command.operationId, immediateFingerprint) as CreateResult | undefined
       if (existing) return existing
     }
@@ -455,9 +489,11 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       const sorted = staged.entries.map((entry) => ({ path: entry.path, sizeBytes: entry.sizeBytes, contentType: entry.contentType, digest: entry.digest })).sort((a, b) => comparePaths(a.path, b.path))
       validateTree(sorted.map((entry) => entry.path))
       if (!sorted.some((entry) => entry.path === 'index.html')) throw new DomainError('INVALID_INPUT', 'A site must contain index.html')
-      const fingerprint = stableFingerprint({ kind: 'create', name, expires, files: digestPairs(sorted) })
-      const existing = receipt(principal.ownerId, command.operationId, fingerprint) as CreateResult | undefined
-      if (existing) return existing
+      if (stored) {
+        const fingerprint = stableFingerprint({ kind: 'create', name, expires: replayExpires, files: digestPairs(sorted) })
+        const existing = receipt(principal.ownerId, command.operationId, fingerprint) as CreateResult | undefined
+        if (existing) return existing
+      }
       const releaseReceipt = await admitReceipt()
       try {
       const total = sorted.reduce((sum, entry) => sum + entry.sizeBytes, 0)
@@ -466,28 +502,33 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       const releaseQuota = await reserveQuota(total, 0, total, true)
       let published = false; let cleanupOwnsQuota = false
       const siteId = opaqueId(); const revisionId = opaqueId()
+      let fingerprint: string | undefined
       try {
       await writeRevision(siteId, revisionId, staged.root, staged, sorted)
-      const timestamp = now()
-      const row: SiteRow = { id: siteId, owner_id: principal.ownerId, name, visibility: 'private', visibility_generation: 1, version: 1,
-        active_revision_id: revisionId, lifecycle: 'active', created_at_ms: timestamp, updated_at_ms: timestamp,
-        expires_at_ms: expires === null ? null : timestamp + expires * 1000, deletion_reason: null, size_bytes: total, file_count: sorted.length }
-      const result: CreateResult = { site: view(row), operationId: command.operationId, operationExpiresAt: iso(timestamp + receiptLifetimeMs) }
+      let result: CreateResult | undefined
       try {
-        sql.transaction(() => {
+        await revisionGate.run(async () => sql.transaction(() => {
+          const timestamp = now()
+          const expires = requestedExpires === undefined ? ownerSettings(principal.ownerId).defaultExpiresInSeconds : requestedExpires
+          fingerprint = stableFingerprint({ kind: 'create', name, expires, files: digestPairs(sorted) })
+          const row: SiteRow = { id: siteId, owner_id: principal.ownerId, name, visibility: 'private', visibility_generation: 1, version: 1,
+            active_revision_id: revisionId, lifecycle: 'active', created_at_ms: timestamp, updated_at_ms: timestamp,
+            expires_at_ms: expires === null ? null : timestamp + expires * 1000, deletion_reason: null, size_bytes: total, file_count: sorted.length }
+          result = { site: view(row), operationId: command.operationId, operationExpiresAt: iso(timestamp + receiptLifetimeMs) }
           sql.prepare('INSERT INTO site_ids VALUES (?,?,?)').run(siteId, principal.ownerId, timestamp)
           sql.prepare("INSERT INTO sites(id,owner_id,name,visibility,visibility_generation,version,active_revision_id,lifecycle,created_at_ms,updated_at_ms,expires_at_ms,size_bytes,file_count) VALUES (?,?,?,'private',1,1,?,'active',?,?,?,?,?)")
             .run(siteId, principal.ownerId, name, revisionId, timestamp, timestamp, row.expires_at_ms, total, sorted.length)
           sql.prepare('INSERT INTO site_revisions(site_id,id,size_bytes,file_count,created_at_ms) VALUES (?,?,?,?,?)').run(siteId, revisionId, total, sorted.length, timestamp)
           saveReceipt(principal.ownerId, command.operationId, 'create', siteId, fingerprint, result, timestamp)
-        })()
+        })())
         published = true
       } catch (error) {
-        const committed = receipt(principal.ownerId, command.operationId, fingerprint) as CreateResult | undefined
+        const committed = fingerprint ? receipt(principal.ownerId, command.operationId, fingerprint) as CreateResult | undefined : undefined
         if (committed) { published = true; return committed }
         throw error
       }
       await options.fault?.('after-commit')
+      if (!result) throw new Error('Site creation committed without a result')
       return result
       } catch (error) {
         if (!published) { cleanupOwnsQuota = true; await discardArtifacts([join(staged.root, 'revision'), join(sitesRoot, siteId)], releaseQuota) }
@@ -616,7 +657,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
   const setVisibility: SiteModule['setVisibility'] = (principal, command) => mutation(principal, command.operationId, command.siteId, async () => {
     if (!['private', 'public'].includes(command.visibility)) throw new DomainError('INVALID_INPUT', 'Visibility must be private or public')
     const fingerprint = stableFingerprint({ kind: 'visibility', siteId: command.siteId, expectedVersion: command.expectedVersion, visibility: command.visibility })
-    const existing = receipt(principal.ownerId, command.operationId, fingerprint) as VisibilityResult | undefined
+    const existing = receipt(principal.ownerId, command.operationId, fingerprint) as SiteMutationResult | undefined
     if (existing) return existing
     const releaseReceipt = await admitReceipt()
     try {
@@ -625,7 +666,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     const timestamp = now(); const changed = row.visibility !== command.visibility
     const updated = { ...row, visibility: command.visibility, version: changed ? row.version + 1 : row.version, updated_at_ms: changed ? timestamp : row.updated_at_ms,
       visibility_generation: row.visibility === 'public' && command.visibility === 'private' ? row.visibility_generation + 1 : row.visibility_generation }
-    const result: VisibilityResult = { site: view(updated), operationId: command.operationId, operationExpiresAt: iso(timestamp + receiptLifetimeMs) }
+    const result: SiteMutationResult = { site: view(updated), operationId: command.operationId, operationExpiresAt: iso(timestamp + receiptLifetimeMs) }
     await revisionGate.run(async () => sql.transaction(() => {
       ensureMutable(principal.ownerId, row.id, command.expectedVersion, timestamp)
       if (changed) {
@@ -636,6 +677,34 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       saveReceipt(principal.ownerId, command.operationId, 'visibility', row.id, fingerprint, result, timestamp)
     })())
     if (changed) audit({ event: 'site_visibility_changed', ownerId: principal.ownerId, siteId: row.id, operationId: command.operationId, visibility: command.visibility })
+    return result
+    } finally { await releaseReceipt() }
+  })
+
+  const setExpiration: SiteModule['setExpiration'] = (principal, command) => mutation(principal, command.operationId, command.siteId, async () => {
+    const seconds = command.expiresInSeconds
+    if (seconds !== null && (!Number.isInteger(seconds) || seconds < 60 || seconds > 2_592_000)) throw new DomainError('INVALID_INPUT', 'Expiration must be between 60 and 2592000 seconds or null')
+    const fingerprint = stableFingerprint({ kind: 'expiration', siteId: command.siteId, expectedVersion: command.expectedVersion, expiresInSeconds: seconds })
+    const existing = receipt(principal.ownerId, command.operationId, fingerprint) as SiteMutationResult | undefined
+    if (existing) return existing
+    const releaseReceipt = await admitReceipt()
+    try {
+    const row = siteRow(principal.ownerId, command.siteId)
+    if (row.version !== command.expectedVersion) throw new DomainError('VERSION_CONFLICT', 'Site version does not match', { currentVersion: row.version })
+    const timestamp = now()
+    const expiresAt = seconds === null ? null : timestamp + seconds * 1000
+    const changed = row.expires_at_ms !== expiresAt
+    const updated = { ...row, expires_at_ms: expiresAt, version: changed ? row.version + 1 : row.version, updated_at_ms: changed ? timestamp : row.updated_at_ms }
+    const result: SiteMutationResult = { site: view(updated), operationId: command.operationId, operationExpiresAt: iso(timestamp + receiptLifetimeMs) }
+    await revisionGate.run(async () => sql.transaction(() => {
+      ensureMutable(principal.ownerId, row.id, command.expectedVersion, timestamp)
+      if (changed) {
+        const update = sql.prepare("UPDATE sites SET expires_at_ms=?,version=?,updated_at_ms=? WHERE id=? AND owner_id=? AND lifecycle='active' AND version=? AND (expires_at_ms IS NULL OR expires_at_ms>?)")
+          .run(updated.expires_at_ms, updated.version, updated.updated_at_ms, row.id, principal.ownerId, row.version, timestamp)
+        if (update.changes !== 1) ensureMutable(principal.ownerId, row.id, command.expectedVersion, timestamp)
+      }
+      saveReceipt(principal.ownerId, command.operationId, 'expiration', row.id, fingerprint, result, timestamp)
+    })())
     return result
     } finally { await releaseReceipt() }
   })
@@ -768,6 +837,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
   }
 
   return {
+    getOwnerSettings, setOwnerSettings,
     createSite,
     async listSites(principal, query = {}) {
       const requestedLimit = query.limit ?? 50
@@ -783,7 +853,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     async getSite(principal, siteId) { return view(siteRow(principal.ownerId, siteId, true)) },
     writeFiles: (principal, command) => changeFiles('write', principal, { ...command, files: command.files }),
     deleteFiles: (principal, command) => changeFiles('delete-files', principal, { ...command, paths: command.paths }),
-    setVisibility, deleteSite,
+    setVisibility, setExpiration, deleteSite,
     async listFiles(principal, query) {
       const lease = await acquireRevision(() => {
         const row = siteRow(principal.ownerId, query.siteId)

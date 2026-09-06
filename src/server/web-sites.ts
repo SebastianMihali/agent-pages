@@ -9,6 +9,7 @@ import { errorResponse, requireOrigin } from './errors'
 import { siteOrigin } from './hosts'
 import { siteInputSchemas } from './site-input'
 import { cookieNames, json, parseInput, readCookie, type Auth } from './web-auth'
+import { allowedDefaultExpiresInSeconds } from './sites/expiration'
 
 const escape = (text: string) => text.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!)
 function postForm(action: string, fields: Record<string, string>) {
@@ -25,11 +26,15 @@ function postForm(action: string, fields: Record<string, string>) {
 export function createSitesWebHandler(config: AppConfig, auth: Auth, sites: SiteModule, access: Access) {
   const schemas = siteInputSchemas(config)
   const visibility = schemas.visibility.extend({ csrfToken: z.string().max(128) })
+  const expiration = schemas.expiration.extend({ csrfToken: z.string().max(128) })
+  const settings = z.strictObject({ csrfToken: z.string().max(128),
+    defaultExpiresInSeconds: z.number().int().refine((value) => allowedDefaultExpiresInSeconds.has(value)).nullable() })
   return async (request: Request): Promise<Response | null> => {
     const url = new URL(request.url)
-    const web = /^\/web\/sites(?:\/([a-f0-9]{32})(?:\/(files|visibility))?)?$/.exec(url.pathname)
+    const web = /^\/web\/sites(?:\/([a-f0-9]{32})(?:\/(files|visibility|expiration))?)?$/.exec(url.pathname)
+    const ownerSettings = url.pathname === '/web/settings'
     const opening = /^\/sites\/([a-f0-9]{32})\/open$/.exec(url.pathname)
-    if (!web && !opening) return null
+    if (!web && !opening && !ownerSettings) return null
     try {
       const sessionToken = readCookie(request, cookieNames(config).session)
       if (opening) {
@@ -55,8 +60,17 @@ export function createSitesWebHandler(config: AppConfig, auth: Auth, sites: Site
       }
       if (request.method !== 'GET') requireOrigin(request, config.appOrigin)
       const session = auth.requireSession(sessionToken)
+      if (ownerSettings) {
+        if (request.method === 'GET') return json(await sites.getOwnerSettings(session))
+        if (request.method === 'POST') {
+          const input = parseInput(settings, await readJson(request, 4096))
+          auth.verifySessionCsrf(sessionToken, input.csrfToken)
+          return json(await sites.setOwnerSettings(session, { defaultExpiresInSeconds: input.defaultExpiresInSeconds }))
+        }
+        return new Response(null, { status: 405, headers: { allow: 'GET, POST' } })
+      }
       const [, siteId, action] = web!
-      if (request.method === 'GET' && action !== 'visibility') {
+      if (request.method === 'GET' && action !== 'visibility' && action !== 'expiration') {
         const query: Record<string, unknown> = Object.fromEntries(url.searchParams)
         if (query.limit !== undefined) query.limit = Number(query.limit)
         if (!siteId) return json(await sites.listSites(session, parseInput(schemas.list, query)))
@@ -68,6 +82,12 @@ export function createSitesWebHandler(config: AppConfig, auth: Auth, sites: Site
         auth.verifySessionCsrf(sessionToken, input.csrfToken)
         return json(await sites.setVisibility(session, { operationId: input.operationId,
           expectedVersion: input.expectedVersion, visibility: input.visibility, siteId }))
+      }
+      if (request.method === 'POST' && action === 'expiration') {
+        const input = parseInput(expiration, await readJson(request, 4096))
+        auth.verifySessionCsrf(sessionToken, input.csrfToken)
+        return json(await sites.setExpiration(session, { operationId: input.operationId,
+          expectedVersion: input.expectedVersion, expiresInSeconds: input.expiresInSeconds, siteId }))
       }
       return new Response(null, { status: 405 })
     } catch (error) { return errorResponse(error) }

@@ -36,8 +36,10 @@ describe('site tools through the official MCP HTTP transport', () => {
     const { config, headers, api, rpc, call } = await fixture()
     const discovery = await rpc('tools/list')
     expect(discovery.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual([
-      'create_site', 'delete_files', 'delete_site', 'get_site', 'list_files', 'list_sites', 'read_file', 'set_site_visibility', 'write_files',
+      'create_site', 'delete_files', 'delete_site', 'get_site', 'list_files', 'list_sites', 'read_file', 'set_site_expiration', 'set_site_visibility', 'write_files',
     ])
+    expect(discovery.result.tools.find((tool: { name: string }) => tool.name === 'set_site_expiration').annotations)
+      .toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true })
     const command = { operationId: crypto.randomUUID(), name: 'Cross transport', files: [{ path: 'index.html', content: 'private text' }] }
     const rest = await api(new Request(`${config.appOrigin}/api/sites`, { method: 'POST', headers, body: JSON.stringify(command) }))
     const created = await rest!.json()
@@ -47,6 +49,24 @@ describe('site tools through the official MCP HTTP transport', () => {
     expect((await call('list_sites', {})).structuredContent.sites).toHaveLength(1)
     expect((await call('read_file', { siteId: created.site.id, path: 'index.html' })).structuredContent)
       .toMatchObject({ path: 'index.html', content: 'private text', sizeBytes: 12 })
+  })
+
+  it('changes expiration with structured results and reports conflicts and invalid input', async () => {
+    const { call } = await fixture()
+    const created = (await call('create_site', { operationId: crypto.randomUUID(), name: 'Expiration tool',
+      expiresInSeconds: null, files: [{ path: 'index.html', content: 'live' }] })).structuredContent
+    const changed = await call('set_site_expiration', {
+      operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, expiresInSeconds: 86_400,
+    })
+    expect(changed).toMatchObject({ content: [{ type: 'text', text: 'Site expiration changed.' }], structuredContent: { site: { version: 2 } } })
+    const conflict = await call('set_site_expiration', {
+      operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, expiresInSeconds: null,
+    })
+    expect(conflict).toMatchObject({ isError: true, structuredContent: { error: { code: 'VERSION_CONFLICT', details: { currentVersion: 2 } } } })
+    const invalid = await call('set_site_expiration', {
+      operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 2, expiresInSeconds: 59,
+    })
+    expect(invalid.isError).toBe(true)
   })
 
   it('returns authenticated download metadata for large text and binary and structured owner-scoped errors', async () => {

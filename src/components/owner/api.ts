@@ -1,4 +1,6 @@
-import type { ManifestEntry, SiteView } from '../../server/sites'
+import type { ManifestEntry, OwnerSettings, SiteView } from '../../server/sites'
+
+export type { OwnerSettings }
 
 export type Session =
   | { authenticated: false; csrfToken: string }
@@ -25,7 +27,7 @@ export type ApiKeySummary = {
 export type CreatedApiKey = ApiKeySummary & { key: string }
 
 export class ApiFailure extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly code?: string) {
     super(message)
   }
 }
@@ -42,15 +44,17 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
   const text = await response.text()
   if (!response.ok) {
     let message = 'The request failed. Try again.'
+    let code: string | undefined
     if (text) {
       try {
-        const body = JSON.parse(text) as { error?: { message?: string } }
+        const body = JSON.parse(text) as { error?: { code?: string; message?: string } }
         if (body.error?.message) message = body.error.message
+        if (body.error?.code) code = body.error.code
       } catch {
         // Keep the safe fallback for malformed upstream responses.
       }
     }
-    throw new ApiFailure(message, response.status)
+    throw new ApiFailure(message, response.status, code)
   }
   return (text ? JSON.parse(text) : undefined) as T
 }
@@ -61,6 +65,10 @@ export function messageFrom(error: unknown) {
 
 export function isUnauthorized(error: unknown) {
   return error instanceof ApiFailure && error.status === 401
+}
+
+export function isVersionConflict(error: unknown) {
+  return error instanceof ApiFailure && error.code === 'VERSION_CONFLICT'
 }
 
 export function formatBytes(bytes: number) {

@@ -10,9 +10,10 @@ export function siteInputSchemas(config: AppConfig) {
   const files = z.array(z.strictObject({ path, content: z.string() })).min(1).max(config.limits.maxBatchFiles)
   const cursor = z.string().min(1).max(2048).optional()
   const revisionId = z.string().regex(/^[a-f0-9]{32}$/).optional()
+  const expiresInSeconds = z.number().int().min(60).max(2592000).nullable()
   return {
     create: z.strictObject({ operationId, name: z.string().trim().min(1).max(100), files,
-      expiresInSeconds: z.number().int().min(60).max(2592000).nullable().optional() }),
+      expiresInSeconds: expiresInSeconds.optional() }),
     list: z.strictObject({ cursor, limit: z.number().int().min(1).max(50).optional() }),
     get: z.strictObject({ siteId }),
     read: z.strictObject({ siteId, path, revisionId }),
@@ -20,6 +21,7 @@ export function siteInputSchemas(config: AppConfig) {
     write: z.strictObject({ operationId, expectedVersion, files }),
     deleteFiles: z.strictObject({ operationId, expectedVersion, paths: z.array(path).min(1).max(config.limits.maxBatchFiles) }),
     visibility: z.strictObject({ operationId, expectedVersion, visibility: z.enum(['private', 'public']) }),
+    expiration: z.strictObject({ operationId, expectedVersion, expiresInSeconds }),
     delete: z.strictObject({ operationId, expectedVersion }),
   }
 }

@@ -61,6 +61,8 @@ pnpm exec tsx scripts/mcp-client-smoke.ts both
 
 Each client discovered tools and made these real HTTP MCP calls: `create_site`, `read_file`, `write_files`, an exact replay of `write_files`, another `read_file`, two `set_site_visibility` calls, `get_site`, and `list_files`. The server observed creation as private/version 1, update and replay as version 2, public as version 3, and private again as version 4. Each final site retained three files and its updated index content. Content-handler probes returned anonymous 404 for private state, 200 for public state, then 404 after returning to private. After each client exited, the harness revoked its key and confirmed the next HTTP MCP discovery request returned 401.
 
+The current tool set also includes `set_site_expiration`. That post-verification addition is covered by the automated MCP transport tests; it was not part of the recorded live client run above.
+
 A second actual process invocation of each client reused its fixture site ID and key, initialized a new MCP connection, then successfully called `get_site` and `read_file`. Both saw the existing private/version-4 site and its updated file, with no creation or mutation calls.
 
 The harness also launched each real client with `AGENT_PAGES_API_KEY` removed from its environment and then with an invalid value. No authenticated tool calls occurred and the stored site state remained unchanged in all four cases:

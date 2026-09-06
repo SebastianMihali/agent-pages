@@ -1,7 +1,7 @@
 # Default expiration and `set_site_expiration`
 
 Status: ready-for-agent
-Progress: open
+Progress: done
 Blocked by: 02
 
 ## Objective
@@ -22,12 +22,12 @@ Keep the decision in the site module; REST, MCP and web adapters only validate a
 
 ## Acceptance
 
-- [ ] Creation without `expiresInSeconds` uses the owner default; explicit `null` and explicit numbers behave as specified, with tests for each and for replay after the default changed.
-- [ ] `set_site_expiration` works through REST, MCP and the dashboard with version conflicts, idempotent replay, `SITE_EXPIRED` and other-owner `NOT_FOUND`; expiry enforcement and cleanup use the new value.
-- [ ] Migration applies to an existing database and the cold-restore procedure still passes.
-- [ ] Contract, glossary, client documentation, README and skill are updated; the skill passes its validator.
-- [ ] Browser tests cover the settings presets and a per-site expiration change.
+- [x] Creation without `expiresInSeconds` uses the owner default; explicit `null` and explicit numbers behave as specified, with tests for each and for replay after the default changed.
+- [x] `set_site_expiration` works through REST, MCP and the dashboard with version conflicts, idempotent replay, `SITE_EXPIRED` and other-owner `NOT_FOUND`; expiry enforcement and cleanup use the new value.
+- [x] Migration applies to an existing database and the cold-restore procedure still passes.
+- [x] Contract, glossary, client documentation, README and skill are updated; the skill passes its validator.
+- [x] Browser tests cover the settings presets and a per-site expiration change.
 
 ## Verification
 
-Record focused site-module, API, MCP and browser tests, the migration test and the full `pnpm check`.
+2026-09-06: implemented by Codex from this ticket, reviewed and simplified by the orchestrator (`setExpiration` reuses `siteRow` and `ensureMutable` like `setVisibility`). Migration `0004_owner_settings` adds the per-owner table with a CHECK on the allowed presets; creation resolves the default inside the commit transaction and derives the original resolved value from the stored receipt on replay, so replays after a setting change still match. New `src/server/web-sites.test.ts` covers the settings and expiration web endpoints. `pnpm lint`, `pnpm typecheck`, `pnpm test` (106 tests in 18 files), `pnpm build` and `pnpm test:browser` (13 passed, 1 intentionally skipped, Chromium and Firefox) passed. The live Codex/Claude Code client run recorded in `docs/mcp-clients.md` predates the tool; the transport tests cover it and the document says so.

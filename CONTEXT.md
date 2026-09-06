@@ -47,3 +47,11 @@ _Avoid_: Published site as a synonym, because a private site also has an active 
 **Expired site**:
 A site whose publication lifetime has ended and whose content is no longer available to visitors, even if physical cleanup is pending.
 _Avoid_: Deleted site before cleanup has completed
+
+**Owner expiration default**:
+The owner's preset lifetime for new sites whose creation input omits expiration. Changing it does not affect existing sites.
+_Avoid_: Global expiration, because the setting is stored per owner
+
+**Site expiration**:
+The time when one site's publication lifetime ends. A live site's owner can extend, shorten or remove it; an expired site cannot be revived.
+_Avoid_: Retention period, because operation receipts and stored content have separate retention rules

@@ -39,13 +39,15 @@ export type MutationReceipt = Readonly<{
   operationExpiresAt: string
 }>
 
+export type OwnerSettings = Readonly<{ defaultExpiresInSeconds: number | null }>
+
 export type CreateResult = MutationReceipt & Readonly<{ site: SiteView }>
 export type FileMutationResult = MutationReceipt & Readonly<{
   site: SiteView
   changedPaths: readonly string[]
   deletedPaths: readonly string[]
 }>
-export type VisibilityResult = MutationReceipt & Readonly<{ site: SiteView }>
+export type SiteMutationResult = MutationReceipt & Readonly<{ site: SiteView }>
 export type DeleteResult = MutationReceipt & Readonly<{
   siteId: string
   version: number
@@ -77,6 +79,8 @@ export interface RevisionLease {
 }
 
 export interface SiteModule {
+  getOwnerSettings(principal: Principal): Promise<OwnerSettings>
+  setOwnerSettings(principal: Principal, settings: OwnerSettings): Promise<OwnerSettings>
   createSite(principal: Principal, command: Readonly<{
     operationId: string
     name: string
@@ -107,7 +111,13 @@ export interface SiteModule {
     siteId: string
     expectedVersion: number
     visibility: Visibility
-  }>): Promise<VisibilityResult>
+  }>): Promise<SiteMutationResult>
+  setExpiration(principal: Principal, command: Readonly<{
+    operationId: string
+    siteId: string
+    expectedVersion: number
+    expiresInSeconds: number | null
+  }>): Promise<SiteMutationResult>
   deleteSite(principal: Principal, command: Readonly<{
     operationId: string
     siteId: string

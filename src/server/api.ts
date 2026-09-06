@@ -27,7 +27,7 @@ export function createApiHandler(config: AppConfig, auth: ReturnType<typeof crea
     try {
       requireOrigin(request, config.appOrigin, false)
       const principal = authenticatedPrincipal ?? auth.readBearer(request)
-      const match = /^\/api\/sites(?:\/([a-f0-9]{32})(?:\/(file|files|files\/delete|visibility))?)?$/.exec(url.pathname)
+      const match = /^\/api\/sites(?:\/([a-f0-9]{32})(?:\/(file|files|files\/delete|visibility|expiration))?)?$/.exec(url.pathname)
       if (!match) throw new DomainError('NOT_FOUND', 'Not found')
       const [, siteId, resource] = match
       const query = queryInput(url)
@@ -68,10 +68,13 @@ export function createApiHandler(config: AppConfig, auth: ReturnType<typeof crea
       if (siteId && resource === 'visibility' && request.method === 'PUT') {
         return json(await sites.setVisibility(principal, { ...parseSiteInput(schemas.visibility, await readJson(request, config.limits.maxJsonBodyBytes)), siteId }))
       }
+      if (siteId && resource === 'expiration' && request.method === 'PUT') {
+        return json(await sites.setExpiration(principal, { ...parseSiteInput(schemas.expiration, await readJson(request, config.limits.maxJsonBodyBytes)), siteId }))
+      }
       if (siteId && !resource && request.method === 'DELETE') {
         return json(await sites.deleteSite(principal, { ...parseSiteInput(schemas.delete, await readJson(request, config.limits.maxJsonBodyBytes)), siteId }))
       }
-      const allow = !siteId ? 'GET, POST' : !resource ? 'GET, DELETE' : resource === 'files' ? 'GET, PUT' : resource === 'files/delete' ? 'POST' : resource === 'visibility' ? 'PUT' : 'GET'
+      const allow = !siteId ? 'GET, POST' : !resource ? 'GET, DELETE' : resource === 'files' ? 'GET, PUT' : resource === 'files/delete' ? 'POST' : resource === 'visibility' || resource === 'expiration' ? 'PUT' : 'GET'
       return new Response(null, { status: 405, headers: { ...responseHeaders, allow } })
     } catch (error) { return errorResponse(error) }
   }

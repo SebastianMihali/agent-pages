@@ -88,7 +88,7 @@ test('the production MCP transport authenticates discovery and preserves structu
   expect(initialized.response.status()).toBe(200)
   const listed = await send(3, 'tools/list', {}, key)
   expect(listed.body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining([
-    'create_site', 'list_sites', 'read_file', 'write_files', 'set_site_visibility',
+    'create_site', 'list_sites', 'read_file', 'write_files', 'set_site_expiration', 'set_site_visibility',
   ]))
 
   const created = await send(4, 'tools/call', { name: 'create_site', arguments: {

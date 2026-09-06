@@ -82,6 +82,10 @@ export function registerSiteTools(server: McpServer, principal: Principal, sites
     description: 'Explicitly make a site public, allowing anyone to read it, or private, revoking subsequent anonymous access. Does not recall downloaded copies.',
     inputSchema: schemas.visibility.extend({ siteId }), annotations: writeAnnotations,
   }, (input) => result(() => sites.setVisibility(principal, input), 'Site visibility changed.'))
+  server.registerTool('set_site_expiration', {
+    description: 'Set an owned site expiration relative to this call, or remove expiration with null. Expired sites cannot be revived.',
+    inputSchema: schemas.expiration.extend({ siteId }), annotations: { ...writeAnnotations, destructiveHint: false },
+  }, (input) => result(() => sites.setExpiration(principal, input), 'Site expiration changed.'))
   server.registerTool('delete_site', {
     description: 'Delete an owned site and deny new reads; disk cleanup may remain pending. Requires expectedVersion and an operationId UUID.',
     inputSchema: schemas.delete.extend({ siteId }), annotations: writeAnnotations,

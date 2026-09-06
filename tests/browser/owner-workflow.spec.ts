@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { appOrigin, bearer, issueKey, signIn } from './support'
+import { appOrigin, bearer, createSite, issueKey, signIn } from './support'
 
 test('the owner can sign in with the keyboard on a narrow production interface', async ({ browser, page }) => {
   console.log(`browser=${browser.browserType().name()} version=${browser.version()}`)
@@ -53,4 +53,26 @@ test('an API key can be copied, is shown once, and is revoked immediately', asyn
 
   await page.getByRole('button', { name: 'Sign out' }).click()
   await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible()
+})
+
+test('the owner default applies to new sites and site expiration can be removed', async ({ browser, page }) => {
+  console.log(`browser=${browser.browserType().name()} version=${browser.version()}`)
+  await signIn(page)
+  const key = await issueKey(page, `Expiration ${browser.browserType().name()} ${Date.now()}`)
+  await page.getByRole('button', { name: 'Sites' }).click()
+  await page.getByLabel('New sites expire after').selectOption('86400')
+  await expect(page.getByLabel('New sites expire after')).toHaveValue('86400')
+
+  const name = `One day ${browser.browserType().name()} ${Date.now()}`
+  const created = await createSite(page.request, key, name, [{ path: 'index.html', content: 'short-lived' }])
+  expect(Date.parse(created.site.expiresAt!) - Date.parse(created.site.createdAt)).toBe(86_400_000)
+  await page.getByRole('button', { name: 'Refresh site list' }).click()
+  await page.getByRole('button', { name: new RegExp(name) }).click()
+  const metric = page.getByText('Expires', { exact: true }).locator('..')
+  await expect(metric).not.toContainText('Never')
+
+  await page.getByRole('button', { name: 'Change expiration' }).click()
+  await page.getByLabel('Site expiration').selectOption('never')
+  await page.getByRole('button', { name: 'Save expiration' }).click()
+  await expect(metric).toContainText('Never')
 })

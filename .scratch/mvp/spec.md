@@ -69,11 +69,15 @@ Public-to-private prevents new unauthenticated retrievals once the change commit
 
 Site metadata contains `id`, `ownerId`, `name`, `visibility`, `visibilityGeneration`, `version`, `activeRevisionId`, `createdAt`, `updatedAt`, `expiresAt`, `sizeBytes`, `fileCount` and a deletion state. Public responses do not serialize this metadata.
 
-`version` is a positive integer starting at 1. Increment it after every successful state-changing mutation, including visibility changes. `activeRevisionId` identifies a complete file revision and changes only for content publication. A no-op mutation leaves version/timestamps unchanged and still records an idempotent result. Return current `version` in owner-authorized reads and successful mutations.
+`version` is a positive integer starting at 1. Increment it after every successful state-changing mutation, including visibility and expiration changes. `activeRevisionId` identifies a complete file revision and changes only for content publication. A no-op mutation leaves version/timestamps unchanged and still records an idempotent result. Return current `version` in owner-authorized reads and successful mutations.
 
-Create accepts `name` (1–100 trimmed characters), nonempty initial files including root `index.html`, and optional `expiresInSeconds` (`null` or an integer from 60 through 2,592,000). Compute `expiresAt` once on successful creation. Expiration is immutable in this MVP. Site type is static; reject a requested SPA type with an actionable unsupported-feature error.
+Each owner has a `defaultExpiresInSeconds` setting stored in SQLite. Its initial value when no setting row exists is 604,800 seconds. The allowed values are 86,400, 604,800, 2,592,000 or `null`. Only authenticated web handlers expose this setting; REST, MCP and environment configuration do not.
 
-Expired sites are unavailable immediately by time comparison. Owner listing/get still identifies expiration until cleanup removes metadata; writes and visibility changes reject expired sites. Owner deletion is permitted. Cleanup uses the same deletion machinery as explicit deletion.
+Create accepts `name` (1–100 trimmed characters), nonempty initial files including root `index.html`, and optional `expiresInSeconds` (`null` or an integer from 60 through 2,592,000). When `expiresInSeconds` is omitted, resolve the owner's default at commit time. Explicit `null` means no expiration and an explicit number wins. Compute `expiresAt` from the resolved value on successful creation. Existing sites are unaffected when the owner default changes. Creation fingerprints use the resolved expiration. When an omitted-expiration creation is replayed after the owner changes the default, compare it with the resolved value stored in the original receipt.
+
+Expiration is mutable through `set_site_expiration`. It accepts `expiresInSeconds` as `null` or an integer from 60 through 2,592,000 relative to the call time, uses the normal ownership, receipt and expected-version checks, and returns `{site, operationId, operationExpiresAt}`. A state-changing expiration update increments `version` and updates `updatedAt`; a no-op records a receipt without changing either. Expiration is terminal: an expired site returns `SITE_EXPIRED` and cannot be revived. Site type is static; reject a requested SPA type with an actionable unsupported-feature error.
+
+Expired sites are unavailable immediately by time comparison. Owner listing/get still identifies expiration until cleanup removes metadata; writes, visibility changes and expiration changes reject expired sites. Owner deletion is permitted. Cleanup uses the same deletion machinery as explicit deletion.
 
 The active revision has a manifest of canonical paths, byte lengths, MIME types and content digests. A manifest is internal metadata outside the served files tree. Validate site totals against the prospective result, not just the upload delta.
 
@@ -116,9 +120,9 @@ Every site mutation requires an `operationId`, a caller-generated UUID. Scope it
 - Reusing an ID with different input returns `IDEMPOTENCY_CONFLICT`.
 - Concurrent duplicates serialize/coalesce; they cannot both publish or create sites.
 - Persist receipts for at least 24 hours after commit; return `operationExpiresAt` with mutations. Beyond retention, replay is not guaranteed: inspect state and create a fresh operation ID deliberately. Retain deletion receipts after physical cleanup.
-- All updates/deletions/visibility changes require `expectedVersion`. A mismatch returns `VERSION_CONFLICT` with the current version only after owner authorization.
+- All updates, deletions, visibility changes and expiration changes require `expectedVersion`. A mismatch returns `VERSION_CONFLICT` with the current version only after owner authorization.
 - Failed validation/quota checks do not consume an operation ID. Reusing it after correcting arguments is allowed if no successful receipt exists.
-- Retrying a previously completed visibility change never re-applies it over a newer state: the receipt describes that earlier result. Read current state when uncertain.
+- Retrying a previously completed visibility or expiration change never re-applies it over a newer state: the receipt describes that earlier result. Read current state when uncertain.
 
 Receipt storage, queues and rate-limit state are bounded. Never purge an unexpired receipt to admit another operation; reject admissions if the configured capacity is reached.
 
@@ -156,11 +160,12 @@ All site-management calls use the same domain operations. Zod validates inputs, 
 | Batch upsert text files | `PUT /api/sites/:siteId/files` | `write_files` |
 | Batch delete files | `POST /api/sites/:siteId/files/delete` | `delete_files` |
 | Change visibility | `PUT /api/sites/:siteId/visibility` | `set_site_visibility` |
+| Change expiration | `PUT /api/sites/:siteId/expiration` | `set_site_expiration` |
 | Delete site | `DELETE /api/sites/:siteId` | `delete_site` |
 
 Mutation JSON bodies carry `operationId` and, except creation, `expectedVersion`. Delete-site also uses a JSON body. File deletes use POST to avoid depending on intermediary support for a DELETE batch body. Verify delete-site body handling through the intended proxy.
 
-Create input: `{operationId, name, files: [{path, content}], expiresInSeconds?}`. Text contents are UTF-8 strings; sizes are measured as UTF-8 bytes, not JavaScript string lengths. Write input: `{operationId, expectedVersion, files: [{path, content}]}`. File-delete input replaces `files` with a nonempty `paths` array; missing paths are no-ops. Visibility input replaces it with `visibility: 'private' | 'public'`. Reject empty write/delete batches.
+Create input: `{operationId, name, files: [{path, content}], expiresInSeconds?}`. Text contents are UTF-8 strings; sizes are measured as UTF-8 bytes, not JavaScript string lengths. Write input: `{operationId, expectedVersion, files: [{path, content}]}`. File-delete input replaces `files` with a nonempty `paths` array; missing paths are no-ops. Visibility input replaces it with `visibility: 'private' | 'public'`. Expiration input is `{operationId, expectedVersion, expiresInSeconds}` where expiration is `null` or an integer from 60 through 2,592,000 relative to the call time. Reject empty write/delete batches.
 
 Create returns `{site, operationId, operationExpiresAt}`. Mutations return `{site, changedPaths, deletedPaths, operationId, operationExpiresAt}` where applicable; deletion returns `{siteId, version, deleted: true, cleanupPending, operationId, operationExpiresAt}`. Site responses contain `id`, `name`, `visibility`, `version`, `revisionId`, `url`, `openUrl`, timestamps, expiration and file totals. Serialize timestamps as UTC ISO-8601 strings and unset expiration as null. Return no private file content or tokens in creation summaries.
 
@@ -215,7 +220,7 @@ Bound password verification with `MAX_CONCURRENT_PASSWORD_VERIFICATIONS` (2; max
 
 ## Web interface and operations
 
-The minimum web interface provides login/logout, owned-site list/detail, open-site navigation, private/public controls and API-key creation/revocation. Show visibility prominently; state that making a site public allows anyone to view it. Never render uploaded HTML in the application origin. Render filenames/names as text, and open site content in a separate tab with opener isolation.
+The minimum web interface provides login/logout, owned-site list/detail, open-site navigation, private/public controls, expiration controls and API-key creation/revocation. Near the site list heading, let the owner choose the default for new sites from 1 day, 7 days, 30 days or Never. In site detail, show the current expiration and let the owner choose the same presets relative to the call time. On `VERSION_CONFLICT`, reload the current site, show the conflict and never overwrite newer state. Show visibility prominently; state that making a site public allows anyone to view it. Never render uploaded HTML in the application origin. Render filenames/names as text, and open site content in a separate tab with opener isolation.
 
 Configuration includes `APP_ORIGIN`, `CONTENT_BASE_DOMAIN`, `DATA_DIR=/data`, `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH` and the limits above. Use a separate test/development directory. A development-only HTTP mode may use distinct loopback hostnames and non-production cookie names; it must not be reachable through production configuration. Browser acceptance runs with local HTTPS and production cookie rules.
 

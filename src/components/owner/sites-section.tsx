@@ -16,10 +16,11 @@ import {
   formatDate,
   formatRelative,
   isUnauthorized,
+  isVersionConflict,
   messageFrom,
   requestJson,
 } from './api'
-import type { FileListResponse, SiteListResponse } from './api'
+import type { FileListResponse, OwnerSettings, SiteListResponse } from './api'
 import { ErrorMessage } from './error-message'
 
 export function SitesSection({ csrfToken, selectedSiteId, returnPath, onSelectSite, onUnauthorized }: {
@@ -33,6 +34,8 @@ export function SitesSection({ csrfToken, selectedSiteId, returnPath, onSelectSi
   const [cursor, setCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [settings, setSettings] = useState<OwnerSettings | null>(null)
+  const [savingSettings, setSavingSettings] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const loadSites = useCallback(async (nextCursor?: string) => {
@@ -59,20 +62,58 @@ export function SitesSection({ csrfToken, selectedSiteId, returnPath, onSelectSi
   }, [loadSites])
 
   useEffect(() => {
+    requestJson<OwnerSettings>('/web/settings').then(setSettings).catch((cause: unknown) => {
+      if (isUnauthorized(cause)) onUnauthorized()
+      else setError(messageFrom(cause))
+    })
+  }, [onUnauthorized])
+
+  useEffect(() => {
     if (!selectedSiteId && sites[0]) onSelectSite(sites[0].id, true)
   }, [onSelectSite, selectedSiteId, sites])
 
+  async function setDefaultExpiration(value: string) {
+    setSavingSettings(true)
+    setError(null)
+    try {
+      const defaultExpiresInSeconds = value === 'never' ? null : Number(value)
+      setSettings(await requestJson<OwnerSettings>('/web/settings', {
+        method: 'POST', body: JSON.stringify({ csrfToken, defaultExpiresInSeconds }),
+      }))
+    } catch (cause) {
+      if (isUnauthorized(cause)) onUnauthorized()
+      else setError(messageFrom(cause))
+    } finally { setSavingSettings(false) }
+  }
+
   return (
     <section aria-labelledby="sites-heading">
-      <div className="mb-7 flex items-end justify-between gap-4">
+      <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Workspace</p>
           <h1 id="sites-heading" className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-slate-950">Your sites</h1>
           <p className="mt-2 text-sm text-slate-500">Manage content and access in one place.</p>
         </div>
-        <Button aria-label="Refresh site list" onClick={() => void loadSites()} variant="secondary" size="icon">
-          <RefreshCw aria-hidden="true" className={`size-4 ${loading ? 'animate-spin' : ''}`} />
-        </Button>
+        <div className="flex items-end gap-2">
+          <label className="text-xs font-medium text-slate-600">
+            <span className="mb-1.5 block">New sites expire after</span>
+            <select
+              aria-label="New sites expire after"
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+              disabled={!settings || savingSettings}
+              onChange={(event) => void setDefaultExpiration(event.target.value)}
+              value={settings?.defaultExpiresInSeconds === null ? 'never' : String(settings?.defaultExpiresInSeconds ?? '')}
+            >
+              <option value="86400">1 day</option>
+              <option value="604800">7 days</option>
+              <option value="2592000">30 days</option>
+              <option value="never">Never</option>
+            </select>
+          </label>
+          <Button aria-label="Refresh site list" onClick={() => void loadSites()} variant="secondary" size="icon">
+            <RefreshCw aria-hidden="true" className={`size-4 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
       </div>
 
       {error && <div className="mb-5"><ErrorMessage>{error}</ErrorMessage></div>}
@@ -168,6 +209,9 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
   const [loading, setLoading] = useState(true)
   const [loadingFiles, setLoadingFiles] = useState(false)
   const [changingVisibility, setChangingVisibility] = useState(false)
+  const [changingExpiration, setChangingExpiration] = useState(false)
+  const [editingExpiration, setEditingExpiration] = useState(false)
+  const [expirationPreset, setExpirationPreset] = useState('604800')
   const [confirmPublic, setConfirmPublic] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -215,6 +259,26 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
     }
   }
 
+  async function setExpiration() {
+    if (!site) return
+    setChangingExpiration(true)
+    setError(null)
+    try {
+      await requestJson(`/web/sites/${encodeURIComponent(site.id)}/expiration`, {
+        method: 'POST', body: JSON.stringify({ csrfToken, operationId: crypto.randomUUID(), expectedVersion: site.version,
+          expiresInSeconds: expirationPreset === 'never' ? null : Number(expirationPreset) }),
+      })
+      setEditingExpiration(false)
+      await Promise.all([loadDetail(), onChanged()])
+    } catch (cause) {
+      if (isUnauthorized(cause)) onUnauthorized()
+      else if (isVersionConflict(cause)) {
+        await Promise.all([loadDetail(), onChanged()])
+        setError(messageFrom(cause))
+      } else setError(messageFrom(cause))
+    } finally { setChangingExpiration(false) }
+  }
+
   async function setVisibility(visibility: Visibility) {
     if (!site) return
     setChangingVisibility(true)
@@ -233,7 +297,10 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
       await Promise.all([loadDetail(), onChanged()])
     } catch (cause) {
       if (isUnauthorized(cause)) onUnauthorized()
-      else setError(messageFrom(cause))
+      else if (isVersionConflict(cause)) {
+        await Promise.all([loadDetail(), onChanged()])
+        setError(messageFrom(cause))
+      } else setError(messageFrom(cause))
     } finally {
       setChangingVisibility(false)
     }
@@ -272,8 +339,34 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
           <Metric label="Version" value={`v${site.version}`} />
           <Metric label="Files" value={String(site.fileCount)} />
           <Metric label="Size" value={formatBytes(site.sizeBytes)} />
-          <Metric label="Expires" value={site.expiresAt ? formatDate(site.expiresAt) : 'Never'} />
+          <Metric label="Expires" value={site.expiresAt ? formatDate(site.expiresAt) : 'Never'}>
+            <button className="text-xs font-medium text-blue-700 hover:text-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+              onClick={() => { setExpirationPreset(site.expiresAt ? '604800' : 'never'); setEditingExpiration(true) }} type="button">
+              Change expiration
+            </button>
+          </Metric>
         </dl>
+        {editingExpiration && (
+          <div className="mt-4 flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-end">
+            <label className="text-xs font-medium text-slate-600">
+              <span className="mb-1.5 block">Site expiration</span>
+              <select aria-label="Site expiration" className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+                disabled={changingExpiration} onChange={(event) => setExpirationPreset(event.target.value)} value={expirationPreset}>
+                <option value="86400">1 day</option>
+                <option value="604800">7 days</option>
+                <option value="2592000">30 days</option>
+                <option value="never">Never</option>
+              </select>
+            </label>
+            <div className="flex gap-2">
+              <Button disabled={changingExpiration} onClick={() => void setExpiration()} size="small">
+                {changingExpiration && <Spinner />}
+                Save expiration
+              </Button>
+              <Button disabled={changingExpiration} onClick={() => setEditingExpiration(false)} variant="ghost" size="small">Cancel</Button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="border-b border-slate-100 bg-slate-50/70 p-5 sm:p-6">
@@ -370,11 +463,11 @@ function DetailSkeleton() {
   )
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, children }: { label: string; value: string; children?: React.ReactNode }) {
   return (
     <div>
       <dt className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400">{label}</dt>
-      <dd className="mt-1.5 text-sm font-medium text-slate-800">{value}</dd>
+      <dd className="mt-1.5 flex flex-wrap items-center gap-2 text-sm font-medium text-slate-800">{value}{children}</dd>
     </div>
   )
 }

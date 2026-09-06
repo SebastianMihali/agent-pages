@@ -2,7 +2,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
-import type { CreateResult, SiteView, VisibilityResult } from '../../src/server/sites'
+import type { CreateResult, SiteMutationResult, SiteView } from '../../src/server/sites'
 
 export const appOrigin = 'https://app.agent-pages.localhost:3443'
 
@@ -42,7 +42,7 @@ export async function setVisibility(request: APIRequestContext, key: string, sit
   })
   const body = await response.text()
   expect(response.status(), body).toBe(200)
-  return JSON.parse(body) as VisibilityResult
+  return JSON.parse(body) as SiteMutationResult
 }
 
 export async function uploadFont(request: APIRequestContext, key: string, site: SiteView) {
