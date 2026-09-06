@@ -259,6 +259,13 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
     }
   }
 
+  // A version conflict means newer state exists: reload it instead of overwriting.
+  async function reportMutationFailure(cause: unknown) {
+    if (isUnauthorized(cause)) return onUnauthorized()
+    if (isVersionConflict(cause)) await Promise.all([loadDetail(), onChanged()])
+    setError(messageFrom(cause))
+  }
+
   async function setExpiration() {
     if (!site) return
     setChangingExpiration(true)
@@ -271,11 +278,7 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
       setEditingExpiration(false)
       await Promise.all([loadDetail(), onChanged()])
     } catch (cause) {
-      if (isUnauthorized(cause)) onUnauthorized()
-      else if (isVersionConflict(cause)) {
-        await Promise.all([loadDetail(), onChanged()])
-        setError(messageFrom(cause))
-      } else setError(messageFrom(cause))
+      await reportMutationFailure(cause)
     } finally { setChangingExpiration(false) }
   }
 
@@ -296,11 +299,7 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
       setConfirmPublic(false)
       await Promise.all([loadDetail(), onChanged()])
     } catch (cause) {
-      if (isUnauthorized(cause)) onUnauthorized()
-      else if (isVersionConflict(cause)) {
-        await Promise.all([loadDetail(), onChanged()])
-        setError(messageFrom(cause))
-      } else setError(messageFrom(cause))
+      await reportMutationFailure(cause)
     } finally {
       setChangingVisibility(false)
     }

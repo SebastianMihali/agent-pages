@@ -39,7 +39,7 @@ describe('site tools through the official MCP HTTP transport', () => {
       'create_site', 'delete_files', 'delete_site', 'get_site', 'list_files', 'list_sites', 'read_file', 'set_site_expiration', 'set_site_visibility', 'write_files',
     ])
     expect(discovery.result.tools.find((tool: { name: string }) => tool.name === 'set_site_expiration').annotations)
-      .toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true })
+      .toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true })
     const command = { operationId: crypto.randomUUID(), name: 'Cross transport', files: [{ path: 'index.html', content: 'private text' }] }
     const rest = await api(new Request(`${config.appOrigin}/api/sites`, { method: 'POST', headers, body: JSON.stringify(command) }))
     const created = await rest!.json()
