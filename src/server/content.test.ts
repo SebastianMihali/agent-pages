@@ -58,3 +58,34 @@ it('authorizes before file routing and serves public nested routes, MIME and HEA
     } finally { logged.mockRestore() }
   } finally { await sites.close(); db.close(); await rm(directory, { recursive: true, force: true }) }
 })
+
+it('marks every site response as not indexable, including denials, redirects and HEAD', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agp-content-robots-'))
+  const db = openDatabase(directory)
+  const config = parseConfig({ DATA_DIR: directory, APP_ORIGIN: 'https://app.example.com',
+    CONTENT_BASE_DOMAIN: 'sites.example.com', ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'a'.repeat(32)}$${'b'.repeat(64)}` })
+  const auth = createAuth(db, config)
+  const sites = await createSiteModule(config, db)
+  try {
+    const principal = { ownerId: auth.ownerId }
+    const { site } = await sites.createSite(principal, { operationId: randomUUID(), name: 'Robots', files: [
+      { path: 'index.html', content: 'home' }, { path: 'about/index.html', content: 'nested' },
+      { path: '404.html', content: 'custom missing' }, { path: 'style.css', content: 'body{}' },
+    ] })
+    const handle = createContentHandler(config, sites, createAccess(db, auth, sites))
+    const get = (path: string, init?: RequestInit) => handle(new Request(site.url + '/' + path, init), site.id)
+    const robots = async (path: string, init?: RequestInit) => (await get(path, init)).headers.get('x-robots-tag')
+    // Private: denied asset, denied HEAD and the owner-handoff redirect.
+    expect(await robots('style.css')).toBe('noindex, nofollow')
+    expect(await robots('', { method: 'HEAD' })).toBe('noindex, nofollow')
+    expect(await robots('about', { headers: { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' } })).toBe('noindex, nofollow')
+    await sites.setVisibility(principal, { siteId: site.id, operationId: randomUUID(), expectedVersion: 1, visibility: 'public' })
+    // Public: page, asset, HEAD, canonical redirect, custom 404 and invalid path.
+    expect(await robots('')).toBe('noindex, nofollow')
+    expect(await robots('style.css')).toBe('noindex, nofollow')
+    expect(await robots('about/', { method: 'HEAD' })).toBe('noindex, nofollow')
+    expect(await robots('about')).toBe('noindex, nofollow')
+    expect(await robots('missing')).toBe('noindex, nofollow')
+    expect(await robots('%2findex.html')).toBe('noindex, nofollow')
+  } finally { await sites.close(); db.close(); await rm(directory, { recursive: true, force: true }) }
+})

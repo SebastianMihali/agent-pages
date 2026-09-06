@@ -4,7 +4,7 @@ Updated: 2026-09-05. Status: the single-owner MVP is implemented and locally ver
 
 ## Purpose
 
-Agent Pages is a small, self-hosted static hosting application for coding agents and their owners. An owner creates a site through MCP or REST, receives a stable URL, inspects selected files and updates the same site with a small number of operations.
+Agent Pages is a small, self-hosted application for coding agents and their owners to share simple static test sites. It is a developer tool, not a hosting service: hosted sites are excluded from search indexing. An owner creates a site through MCP or REST, receives a stable URL, inspects selected files and updates the same site with a small number of operations.
 
 Every site starts **private to its owner**. The owner can explicitly make it public, and can return it to private visibility. Publication of new content and making a site public are separate operations.
 
@@ -12,6 +12,7 @@ Every site starts **private to its owner**. The owner can explicitly make it pub
 
 - [MVP specification](.scratch/mvp/spec.md): current behavior, transport contracts, limits and acceptance criteria.
 - [Implementation plan](.scratch/mvp/plan.md): ordered tickets, readiness and remaining decisions.
+- [Pre-release deltas](.scratch/pre-release/spec.md): decisions and tickets that amend the MVP contract before the first deployment.
 - [Domain glossary](CONTEXT.md): canonical terms.
 - [Origin isolation decision](docs/adr/0001-isolate-site-origins.md) and [publication decision](docs/adr/0002-publish-complete-revisions.md): durable trade-offs.
 - [Original specification](docs/archive/agent-pages-spec-original.md): historical reference only, superseded by these documents.

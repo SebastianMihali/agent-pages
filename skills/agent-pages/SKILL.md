@@ -17,7 +17,7 @@ For large or binary assets, use authenticated REST multipart `PUT /api/sites/:si
 
 ## Visibility and deletion
 
-Uploading or updating content leaves visibility unchanged. Use `set_site_visibility` only when the user's request explicitly authorizes making the site public or private. Public means anyone can read its content; it never grants management access. A returned receipt describes the original operation, so use `get_site` when current visibility is uncertain. Making a site private blocks subsequent anonymous retrievals but cannot recall copies already downloaded.
+Uploading or updating content leaves visibility unchanged. Use `set_site_visibility` only when the user's request explicitly authorizes making the site public or private. Public means anyone with the URL can read its content; it never grants management access. Sites are never indexed by search engines, so do not promise discoverability. A returned receipt describes the original operation, so use `get_site` when current visibility is uncertain. Making a site private blocks subsequent anonymous retrievals but cannot recall copies already downloaded.
 
 Use `delete_site` for a requested whole-site deletion, with its current version and a fresh operation ID. A successful tombstone makes the site inaccessible immediately; `cleanupPending` describes disk reclamation at the time of that result. Retrying that operation returns its original receipt even after cleanup.
 

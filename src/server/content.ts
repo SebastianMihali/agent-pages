@@ -13,6 +13,8 @@ const securityHeaders = {
   'cross-origin-resource-policy': 'same-origin',
   'permissions-policy': 'camera=(), microphone=(), geolocation=(), document-domain=()',
   'origin-agent-cluster': '?1',
+  // Hosted sites are for sharing test pages, never for search discovery.
+  'x-robots-tag': 'noindex, nofollow',
   'content-security-policy': "default-src 'self' https: http: data: blob:; script-src 'self' https: http: 'unsafe-inline'; style-src 'self' https: http: 'unsafe-inline'; worker-src 'none'; frame-ancestors 'none'",
 }
 const missing = (head = false) => new Response(head ? null : 'Not found', { status: 404, headers: securityHeaders })
