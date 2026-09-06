@@ -67,10 +67,10 @@ export function SitesSection({ csrfToken, selectedSiteId, returnPath, onSelectSi
       <div className="mb-7 flex items-end justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Workspace</p>
-          <h1 id="sites-heading" className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-slate-950">I tuoi siti</h1>
-          <p className="mt-2 text-sm text-slate-500">Controlla contenuti e accesso da un unico spazio.</p>
+          <h1 id="sites-heading" className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-slate-950">Your sites</h1>
+          <p className="mt-2 text-sm text-slate-500">Manage content and access in one place.</p>
         </div>
-        <Button aria-label="Aggiorna elenco siti" onClick={() => void loadSites()} variant="secondary" size="icon">
+        <Button aria-label="Refresh site list" onClick={() => void loadSites()} variant="secondary" size="icon">
           <RefreshCw aria-hidden="true" className={`size-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </div>
@@ -80,10 +80,10 @@ export function SitesSection({ csrfToken, selectedSiteId, returnPath, onSelectSi
       <div className="grid min-w-0 gap-5 xl:grid-cols-[20rem_minmax(0,1fr)]">
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-            {loading ? 'Caricamento…' : `${sites.length} ${sites.length === 1 ? 'sito' : 'siti'}`}
+            {loading ? 'Loading…' : `${sites.length} ${sites.length === 1 ? 'site' : 'sites'}`}
           </div>
           {loading ? (
-            <div className="space-y-3 p-4" aria-label="Caricamento siti">
+            <div className="space-y-3 p-4" aria-label="Loading sites">
               {[0, 1, 2].map((item) => <div className="h-16 animate-pulse rounded-lg bg-slate-100" key={item} />)}
             </div>
           ) : sites.length === 0 ? (
@@ -107,7 +107,7 @@ export function SitesSection({ csrfToken, selectedSiteId, returnPath, onSelectSi
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium text-slate-900">{site.name}</span>
-                    <span className="mt-1 block text-xs text-slate-400">Aggiornato {formatRelative(site.updatedAt)}</span>
+                    <span className="mt-1 block text-xs text-slate-400">Updated {formatRelative(site.updatedAt)}</span>
                   </span>
                   <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-slate-300" />
                 </button>
@@ -116,7 +116,7 @@ export function SitesSection({ csrfToken, selectedSiteId, returnPath, onSelectSi
                 <div className="p-3">
                   <Button className="w-full" disabled={loadingMore} onClick={() => void loadSites(cursor)} variant="ghost" size="small">
                     {loadingMore && <Spinner />}
-                    Carica altri
+                    Load more
                   </Button>
                 </div>
               )}
@@ -135,7 +135,7 @@ export function SitesSection({ csrfToken, selectedSiteId, returnPath, onSelectSi
           />
         ) : (
           <div className="grid min-h-72 place-items-center rounded-xl border border-dashed border-slate-300 bg-white/60 p-8 text-center text-sm text-slate-500">
-            Seleziona un sito per vedere i dettagli.
+            Select a site to view details.
           </div>
         )}
       </div>
@@ -149,8 +149,8 @@ function EmptySites() {
       <span className="mx-auto grid size-11 place-items-center rounded-xl bg-slate-100 text-slate-500">
         <Globe2 aria-hidden="true" className="size-5" />
       </span>
-      <p className="mt-4 text-sm font-medium text-slate-800">Nessun sito</p>
-      <p className="mt-2 text-xs leading-5 text-slate-500">Crea il primo sito tramite REST o MCP.</p>
+      <p className="mt-4 text-sm font-medium text-slate-800">No sites</p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">Create your first site through REST or MCP.</p>
     </div>
   )
 }
@@ -241,7 +241,7 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
 
   if (loading) return <DetailSkeleton />
   if (!site) {
-    return <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><ErrorMessage>{error ?? 'Sito non disponibile.'}</ErrorMessage></div>
+    return <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><ErrorMessage>{error ?? 'Site unavailable.'}</ErrorMessage></div>
   }
 
   return (
@@ -251,7 +251,7 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="truncate text-xl font-semibold tracking-[-0.025em] text-slate-950">{site.name}</h2>
-              <Badge tone={site.visibility}>{site.visibility === 'public' ? 'Pubblico' : 'Privato'}</Badge>
+              <Badge tone={site.visibility}>{site.visibility === 'public' ? 'Public' : 'Private'}</Badge>
             </div>
             <p className="mt-2 truncate font-mono text-xs text-slate-400">{site.url}</p>
           </div>
@@ -263,51 +263,51 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
             rel="noopener noreferrer"
             target="_blank"
           >
-            Apri sito
+            Open site
             <ArrowUpRight aria-hidden="true" className="size-4" />
           </a>
         </div>
 
         <dl className="mt-6 grid grid-cols-2 gap-4 border-t border-slate-100 pt-5 sm:grid-cols-4">
-          <Metric label="Versione" value={`v${site.version}`} />
-          <Metric label="File" value={String(site.fileCount)} />
-          <Metric label="Dimensione" value={formatBytes(site.sizeBytes)} />
-          <Metric label="Scadenza" value={site.expiresAt ? formatDate(site.expiresAt) : 'Nessuna'} />
+          <Metric label="Version" value={`v${site.version}`} />
+          <Metric label="Files" value={String(site.fileCount)} />
+          <Metric label="Size" value={formatBytes(site.sizeBytes)} />
+          <Metric label="Expires" value={site.expiresAt ? formatDate(site.expiresAt) : 'Never'} />
         </dl>
       </div>
 
       <div className="border-b border-slate-100 bg-slate-50/70 p-5 sm:p-6">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">Visibilità</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Visibility</h3>
             <p className="mt-1 text-xs leading-5 text-slate-500">
               {site.visibility === 'private'
-                ? 'Solo tu puoi aprire pagine e risorse di questo sito.'
-                : 'Chiunque abbia il link può vedere pagine e risorse.'}
+                ? "Only you can open this site's pages and assets."
+                : 'Anyone with the link can view its pages and assets.'}
             </p>
           </div>
           {site.visibility === 'private' ? (
             <Button disabled={changingVisibility} onClick={() => setConfirmPublic(true)} variant="secondary" size="small">
               <Globe2 aria-hidden="true" className="size-3.5" />
-              Rendi pubblico
+              Make public
             </Button>
           ) : (
             <Button disabled={changingVisibility} onClick={() => void setVisibility('private')} variant="secondary" size="small">
               {changingVisibility ? <Spinner /> : <LockKeyhole aria-hidden="true" className="size-3.5" />}
-              Rendi privato
+              Make private
             </Button>
           )}
         </div>
         {confirmPublic && (
           <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4" role="alert">
-            <p className="text-sm font-semibold text-amber-950">Rendere pubblico questo sito?</p>
-            <p className="mt-1 text-xs leading-5 text-amber-800">Chiunque potrà vedere e scaricare tutti i file, senza autenticazione.</p>
+            <p className="text-sm font-semibold text-amber-950">Make this site public?</p>
+            <p className="mt-1 text-xs leading-5 text-amber-800">Anyone can view and download all files without signing in.</p>
             <div className="mt-3 flex gap-2">
               <Button disabled={changingVisibility} onClick={() => void setVisibility('public')} size="small">
                 {changingVisibility && <Spinner />}
-                Conferma accesso pubblico
+                Confirm public access
               </Button>
-              <Button disabled={changingVisibility} onClick={() => setConfirmPublic(false)} variant="ghost" size="small">Annulla</Button>
+              <Button disabled={changingVisibility} onClick={() => setConfirmPublic(false)} variant="ghost" size="small">Cancel</Button>
             </div>
           </div>
         )}
@@ -322,9 +322,9 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
           <table className="w-full min-w-[34rem] text-left text-sm">
             <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400">
               <tr>
-                <th className="px-4 py-3">Percorso</th>
-                <th className="px-4 py-3">Tipo</th>
-                <th className="px-4 py-3 text-right">Dimensione</th>
+                <th className="px-4 py-3">Path</th>
+                <th className="px-4 py-3">Type</th>
+                <th className="px-4 py-3 text-right">Size</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -344,12 +344,12 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
               ))}
             </tbody>
           </table>
-          {files.length === 0 && <p className="px-4 py-8 text-center text-sm text-slate-500">Nessun file disponibile.</p>}
+          {files.length === 0 && <p className="px-4 py-8 text-center text-sm text-slate-500">No files available.</p>}
         </div>
         {fileCursor && (
           <Button className="mt-4" disabled={loadingFiles} onClick={() => void loadMoreFiles()} variant="secondary" size="small">
             {loadingFiles && <Spinner />}
-            Carica altri file
+            Load more files
           </Button>
         )}
       </div>
@@ -359,7 +359,7 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
 
 function DetailSkeleton() {
   return (
-    <div aria-label="Caricamento dettagli" className="min-h-[34rem] animate-pulse rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+    <div aria-label="Loading site details" className="min-h-[34rem] animate-pulse rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="h-7 w-52 rounded bg-slate-100" />
       <div className="mt-3 h-4 w-72 max-w-full rounded bg-slate-100" />
       <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4">

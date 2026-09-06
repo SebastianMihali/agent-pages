@@ -10,13 +10,13 @@ test('private content opens for its owner with static assets and explicit visibi
   const unsafeName = `<img src=x onerror=alert('site')> ${browser.browserType().name()}`
   const unsafePath = `assets/<script>alert('file')</script>.txt`
   const created = await createSite(page.request, key, unsafeName, [
-    { path: 'index.html', content: `<!doctype html><link rel="stylesheet" href="/assets/site.css"><script src="/assets/site.js" defer></script><h1>Sito privato</h1><img src="/assets/mark.svg" alt="Segnale blu"><a href="/guide?from=root">Guida</a>` },
-    { path: 'guide/index.html', content: '<!doctype html><h1>Guida annidata</h1>' },
+    { path: 'index.html', content: `<!doctype html><link rel="stylesheet" href="/assets/site.css"><script src="/assets/site.js" defer></script><h1>Private site</h1><img src="/assets/mark.svg" alt="Blue marker"><a href="/guide?from=root">Guide</a>` },
+    { path: 'guide/index.html', content: '<!doctype html><h1>Nested guide</h1>' },
     { path: 'assets/site.css', content: `@font-face{font-family:Fixture;src:url('/assets/test-font.woff')}body{color:rgb(37,99,235);font-family:Fixture,sans-serif}` },
     { path: 'assets/site.js', content: `document.documentElement.dataset.fixtureScript='loaded'` },
     { path: 'assets/mark.svg', content: svg },
-    { path: unsafePath, content: 'Il nome resta testo.' },
-    { path: '404.html', content: '<!doctype html><h1>Pagina fixture non trovata</h1>' },
+    { path: unsafePath, content: 'The name remains text.' },
+    { path: '404.html', content: '<!doctype html><h1>Fixture page not found</h1>' },
   ])
   expect(created.site.visibility).toBe('private')
   const uploaded = await uploadFont(page.request, key, created.site)
@@ -31,8 +31,8 @@ test('private content opens for its owner with static assets and explicit visibi
     }
     expect((await anonymous.request.head(site.url, { maxRedirects: 0 })).status()).toBe(404)
 
-    await page.getByRole('button', { name: 'Siti' }).click()
-    await page.getByRole('button', { name: 'Aggiorna elenco siti' }).click()
+    await page.getByRole('button', { name: 'Sites' }).click()
+    await page.getByRole('button', { name: 'Refresh site list' }).click()
     await page.getByText(unsafeName, { exact: true }).click()
     await expect(page.getByRole('heading', { name: unsafeName })).toBeVisible()
     await expect(page.getByText(unsafePath, { exact: true })).toBeVisible()
@@ -48,10 +48,10 @@ test('private content opens for its owner with static assets and explicit visibi
     })
     const [content] = await Promise.all([
       page.waitForEvent('popup'),
-      page.getByRole('link', { name: 'Apri sito' }).click(),
+      page.getByRole('link', { name: 'Open site' }).click(),
     ])
-    await expect(content.getByRole('heading', { name: 'Sito privato' })).toBeVisible()
-    await expect(content.getByAltText('Segnale blu')).toBeVisible()
+    await expect(content.getByRole('heading', { name: 'Private site' })).toBeVisible()
+    await expect(content.getByAltText('Blue marker')).toBeVisible()
     await expect.poll(() => content.evaluate(() => document.documentElement.dataset.fixtureScript)).toBe('loaded')
     await expect.poll(() => assetResponses.get('/assets/test-font.woff')).toBe(200)
     expect(await content.locator('body').evaluate((body) => getComputedStyle(body).color)).toBe('rgb(37, 99, 235)')
@@ -59,10 +59,10 @@ test('private content opens for its owner with static assets and explicit visibi
 
     await content.goto(`${site.url}/guide?from=test`)
     await expect(content).toHaveURL(`${site.url}/guide/?from=test`)
-    await expect(content.getByRole('heading', { name: 'Guida annidata' })).toBeVisible()
+    await expect(content.getByRole('heading', { name: 'Nested guide' })).toBeVisible()
     const missing = await content.goto(`${site.url}/not-here`)
     expect(missing?.status()).toBe(404)
-    await expect(content.getByRole('heading', { name: 'Pagina fixture non trovata' })).toBeVisible()
+    await expect(content.getByRole('heading', { name: 'Fixture page not found' })).toBeVisible()
     const head = await content.request.head(site.url)
     expect(head.status()).toBe(200)
     expect((await head.body()).byteLength).toBe(0)
@@ -74,9 +74,9 @@ test('private content opens for its owner with static assets and explicit visibi
     expect(stale.status()).toBe(409)
     expect(await stale.json()).toMatchObject({ error: { code: 'VERSION_CONFLICT', retryable: false } })
 
-    await page.getByRole('button', { name: 'Rendi pubblico' }).click()
-    await page.getByRole('button', { name: 'Conferma accesso pubblico' }).click()
-    await expect(page.getByText('Pubblico', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Make public' }).click()
+    await page.getByRole('button', { name: 'Confirm public access' }).click()
+    await expect(page.getByText('Public', { exact: true })).toBeVisible()
     for (const path of ['/', '/guide/', '/assets/site.css', '/assets/site.js', '/assets/mark.svg', '/assets/test-font.woff']) {
       expect((await anonymous.request.get(`${site.url}${path}`)).status(), `public anonymous GET ${path}`).toBe(200)
     }
@@ -85,38 +85,38 @@ test('private content opens for its owner with static assets and explicit visibi
     expect(redirect.headers().location).toBe('/guide/?keep=yes')
     const publicMissing = await anonymous.request.get(`${site.url}/still-missing`)
     expect(publicMissing.status()).toBe(404)
-    expect(await publicMissing.text()).toContain('Pagina fixture non trovata')
+    expect(await publicMissing.text()).toContain('Fixture page not found')
 
-    await page.getByRole('button', { name: 'Rendi privato' }).click()
-    await expect(page.getByText('Privato', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Make private' }).click()
+    await expect(page.getByText('Private', { exact: true })).toBeVisible()
     expect((await anonymous.request.get(site.url, { maxRedirects: 0 })).status()).toBe(404)
     expect((await content.request.get(`${site.url}/assets/site.css`, { maxRedirects: 0 })).status()).toBe(404)
 
     const [reopened] = await Promise.all([
       page.waitForEvent('popup'),
-      page.getByRole('link', { name: 'Apri sito' }).click(),
+      page.getByRole('link', { name: 'Open site' }).click(),
     ])
-    await expect(reopened.getByRole('heading', { name: 'Sito privato' })).toBeVisible()
-    await page.getByRole('button', { name: 'Esci' }).click()
-    await expect(page.getByRole('heading', { name: 'Bentornato' })).toBeVisible()
+    await expect(reopened.getByRole('heading', { name: 'Private site' })).toBeVisible()
+    await page.getByRole('button', { name: 'Sign out' }).click()
+    await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible()
     expect((await reopened.request.get(`${site.url}/assets/site.css`, { maxRedirects: 0 })).status()).toBe(404)
 
     await page.goto(`${site.url}/guide/?deep=yes`)
-    await expect(page.getByRole('heading', { name: 'Bentornato' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible()
     const loginDestination = new URL(page.url())
     expect(loginDestination.origin).toBe('https://app.agent-pages.localhost:3443')
     expect(loginDestination.searchParams.get('site')).toBe(site.id)
     expect(loginDestination.searchParams.get('returnPath')).toBe('/guide/?deep=yes')
-    await page.getByLabel('Nome utente').fill('owner')
+    await page.getByLabel('Username').fill('owner')
     await page.getByLabel('Password').fill('correct test password')
-    await page.getByRole('button', { name: 'Accedi' }).click()
+    await page.getByRole('button', { name: 'Sign in' }).click()
     await expect(page.getByRole('heading', { name: unsafeName })).toBeVisible()
     const [deepLink] = await Promise.all([
       page.waitForEvent('popup'),
-      page.getByRole('link', { name: 'Apri sito' }).click(),
+      page.getByRole('link', { name: 'Open site' }).click(),
     ])
     await expect(deepLink).toHaveURL(`${site.url}/guide/?deep=yes`)
-    await expect(deepLink.getByRole('heading', { name: 'Guida annidata' })).toBeVisible()
+    await expect(deepLink.getByRole('heading', { name: 'Nested guide' })).toBeVisible()
   } finally {
     await anonymous.close()
   }

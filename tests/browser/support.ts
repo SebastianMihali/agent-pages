@@ -8,19 +8,19 @@ export const appOrigin = 'https://app.agent-pages.localhost:3443'
 
 export async function signIn(page: Page) {
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Bentornato' })).toBeVisible()
-  await page.getByLabel('Nome utente').fill('owner')
+  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible()
+  await page.getByLabel('Username').fill('owner')
   await page.getByLabel('Password').fill('correct test password')
-  await page.getByRole('button', { name: 'Accedi' }).click()
-  await expect(page.getByRole('heading', { name: 'I tuoi siti' })).toBeVisible()
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByRole('heading', { name: 'Your sites' })).toBeVisible()
 }
 
 export async function issueKey(page: Page, label: string) {
-  await page.getByRole('button', { name: 'Chiavi API' }).click()
-  await expect(page.getByRole('heading', { name: 'Chiavi API' })).toBeVisible()
-  await page.getByLabel('Etichetta chiave').fill(label)
-  await page.getByRole('button', { name: 'Crea chiave' }).click()
-  const input = page.getByLabel('Nuova chiave API')
+  await page.getByRole('button', { name: 'API keys' }).click()
+  await expect(page.getByRole('heading', { name: 'API keys' })).toBeVisible()
+  await page.getByLabel('Key label').fill(label)
+  await page.getByRole('button', { name: 'Create key' }).click()
+  const input = page.getByLabel('New API key')
   await expect(input).toHaveValue(/^agp_[A-Za-z0-9_-]{43}$/)
   return input.inputValue()
 }

@@ -71,13 +71,13 @@ function SessionLoading({ error, onRetry }: { error: string | null; onRetry: () 
             <ErrorMessage>{error}</ErrorMessage>
             <Button variant="secondary" onClick={() => void onRetry()}>
               <RefreshCw aria-hidden="true" className="size-4" />
-              Riprova
+              Retry
             </Button>
           </>
         ) : (
           <div className="flex items-center gap-2 text-sm text-slate-500">
             <Spinner />
-            Connessione in corso…
+            Connecting…
           </div>
         )}
       </div>
@@ -121,33 +121,33 @@ function Login({ session, onAuthenticated }: {
         <Brand />
         <div className="max-w-xl pb-12">
           <p className="mb-5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-            Hosting statico self-hosted
+            Self-hosted static hosting
           </p>
           <h1 className="text-balance text-5xl font-semibold leading-[1.06] tracking-[-0.045em] text-slate-950">
-            I tuoi siti, sotto il tuo controllo.
+            Your sites, under your control.
           </h1>
           <p className="mt-6 max-w-lg text-lg leading-8 text-slate-500">
-            Pubblica con i tuoi agenti, controlla la visibilità e mantieni un indirizzo stabile per ogni sito.
+            Publish with your agents, manage visibility, and keep a stable address for every site.
           </p>
         </div>
         <div className="flex items-center gap-2 text-sm text-slate-400">
           <ShieldCheck aria-hidden="true" className="size-4" />
-          I nuovi siti sono sempre privati
+          New sites are always private
         </div>
       </section>
 
       <section className="flex min-h-screen items-center justify-center px-6 py-12">
         <div className="w-full max-w-sm">
           <Brand className="mb-14 lg:hidden" />
-          <p className="text-sm font-medium text-slate-500">Area proprietario</p>
-          <h2 className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-slate-950">Bentornato</h2>
+          <p className="text-sm font-medium text-slate-500">Owner area</p>
+          <h2 className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-slate-950">Welcome back</h2>
           <p className="mt-3 text-sm leading-6 text-slate-500">
-            Accedi per gestire siti, visibilità e chiavi API.
+            Sign in to manage sites, visibility, and API keys.
           </p>
 
           <form className="mt-9 space-y-5" onSubmit={submit} aria-busy={busy}>
             <label className="block">
-              <span className="mb-2 block text-sm font-medium text-slate-700">Nome utente</span>
+              <span className="mb-2 block text-sm font-medium text-slate-700">Username</span>
               <Input
                 autoComplete="username"
                 autoFocus
@@ -171,7 +171,7 @@ function Login({ session, onAuthenticated }: {
             {error && <ErrorMessage>{error}</ErrorMessage>}
             <Button className="w-full" disabled={busy} size="default" type="submit">
               {busy && <Spinner />}
-              Accedi
+              Sign in
             </Button>
           </form>
         </div>
@@ -216,29 +216,29 @@ function Dashboard({ session, selectedSiteId, returnPath, onSelectSite, onLogged
           <Brand />
           <div className="flex items-center gap-2">
             <span className="hidden text-sm text-slate-500 sm:block">{session.username}</span>
-            <Button aria-label="Esci" disabled={loggingOut} onClick={() => void logout()} variant="ghost">
+            <Button aria-label="Sign out" disabled={loggingOut} onClick={() => void logout()} variant="ghost">
               {loggingOut ? <Spinner /> : <LogOut aria-hidden="true" className="size-4" />}
-              <span className="hidden sm:inline">Esci</span>
+              <span className="hidden sm:inline">Sign out</span>
             </Button>
           </div>
         </div>
       </header>
 
       <div className="mx-auto grid max-w-[92rem] gap-8 px-4 py-7 sm:px-6 lg:grid-cols-[13rem_minmax(0,1fr)] lg:px-8 lg:py-10">
-        <nav aria-label="Navigazione principale" className="flex gap-2 lg:flex-col">
+        <nav aria-label="Main navigation" className="flex gap-2 lg:flex-col">
           <NavigationButton
             active={section === 'sites'}
             icon={<Globe2 aria-hidden="true" className="size-4" />}
             onClick={() => setSection('sites')}
           >
-            Siti
+            Sites
           </NavigationButton>
           <NavigationButton
             active={section === 'keys'}
             icon={<KeyRound aria-hidden="true" className="size-4" />}
             onClick={() => setSection('keys')}
           >
-            Chiavi API
+            API keys
           </NavigationButton>
         </nav>
 

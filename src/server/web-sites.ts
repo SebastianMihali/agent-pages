@@ -13,7 +13,7 @@ import { cookieNames, json, parseInput, readCookie, type Auth } from './web-auth
 const escape = (text: string) => text.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!)
 function postForm(action: string, fields: Record<string, string>) {
   const nonce = randomBytes(24).toString('base64')
-  const html = `<!doctype html><html lang="it"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Apri sito · Agent Pages</title><body><p>Apertura del sito privato…</p><form method="post" action="${escape(action)}">${Object.entries(fields).map(([name, value]) => `<input type="hidden" name="${escape(name)}" value="${escape(value)}">`).join('')}<button type="submit">Apri sito</button></form><script nonce="${nonce}">document.forms[0].submit()</script></body></html>`
+  const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Open site · Agent Pages</title><body><p>Opening the private site…</p><form method="post" action="${escape(action)}">${Object.entries(fields).map(([name, value]) => `<input type="hidden" name="${escape(name)}" value="${escape(value)}">`).join('')}<button type="submit">Open site</button></form><script nonce="${nonce}">document.forms[0].submit()</script></body></html>`
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
     // Form navigations need a non-null Origin for the exact-origin CSRF check.
     // Only the origin is disclosed; tickets stay exclusively in the POST body.

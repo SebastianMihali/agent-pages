@@ -41,7 +41,7 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
   })
   const text = await response.text()
   if (!response.ok) {
-    let message = 'La richiesta non è riuscita. Riprova.'
+    let message = 'The request failed. Try again.'
     if (text) {
       try {
         const body = JSON.parse(text) as { error?: { message?: string } }
@@ -56,7 +56,7 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
 }
 
 export function messageFrom(error: unknown) {
-  return error instanceof Error ? error.message : 'Si è verificato un errore inatteso.'
+  return error instanceof Error ? error.message : 'Something went wrong.'
 }
 
 export function isUnauthorized(error: unknown) {
@@ -70,15 +70,15 @@ export function formatBytes(bytes: number) {
 }
 
 export function formatDate(value: string) {
-  return new Intl.DateTimeFormat('it-IT', { dateStyle: 'medium' }).format(new Date(value))
+  return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(new Date(value))
 }
 
 export function formatRelative(value: string) {
   const elapsed = Date.now() - new Date(value).getTime()
   const minutes = Math.max(0, Math.floor(elapsed / 60_000))
-  if (minutes < 1) return 'ora'
-  if (minutes < 60) return `${minutes} min fa`
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} ${hours === 1 ? 'ora' : 'ore'} fa`
+  if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`
   return formatDate(value)
 }
