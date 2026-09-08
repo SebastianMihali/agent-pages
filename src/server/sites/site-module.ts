@@ -16,6 +16,7 @@ import type {
   SiteModule, SiteModuleOptions, SiteMutationResult, SiteView,
 } from '.'
 import { allowedDefaultExpiresInSeconds, initialDefaultExpiresInSeconds } from './expiration'
+import { streamZip } from './zip-export'
 
 const receiptLifetimeMs = 24 * 60 * 60 * 1000
 const pathLimitBytes = 512
@@ -180,6 +181,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
   const quotaGate = new Mutex()
   const shutdown = new AbortController()
   const leases = new Map<string, number>()
+  const exports = new Set<Promise<void>>()
   type PendingCleanup = { roots: Set<string>; releaseReservation: () => Promise<void> }
   const pendingCleanups = new Set<PendingCleanup>()
   let reservedActiveBytes = 0
@@ -720,7 +722,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
 
   // The lease is taken under the revision gate so cleanup cannot reclaim the
   // revision; the manifest is then read outside the gate, off the serving hot path.
-  const acquireRevision = async (select: () => Readonly<{ row: SiteRow; revisionId: string }>): Promise<RevisionLease> => {
+  const acquireRevision = async (select: () => Readonly<{ row: SiteRow; revisionId: string }>, lifetime: 'file' | 'revision' = 'file'): Promise<RevisionLease> => {
     const { row, revisionId, key } = await revisionGate.run(async () => {
       const selected = select()
       const exists = sql.prepare('SELECT 1 FROM site_revisions WHERE site_id=? AND id=?').get(selected.row.id, selected.revisionId)
@@ -734,6 +736,8 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     let manifest: StoredManifest
     try { manifest = await readManifest(row.id, revisionId) }
     catch (error) { await release(); throw error }
+    const entries = lifetime === 'revision' ? new Map(manifest.files.map((entry) => [entry.path, entry])) : undefined
+    const finishFile = lifetime === 'file' ? release : async () => {}
     return {
       site: { id: row.id, ownerId: row.owner_id, visibility: row.visibility, visibilityGeneration: row.visibility_generation, expiresAt: row.expires_at_ms === null ? null : new Date(row.expires_at_ms) },
       revisionId, manifest: manifest.files, release,
@@ -742,7 +746,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
         let canonical: string
         try { canonical = canonicalPath(path) }
         catch (error) { await release(); throw error }
-        const entry = manifest.files.find((item) => item.path === canonical)
+        const entry = entries ? entries.get(canonical) : manifest.files.find((item) => item.path === canonical)
         if (!entry) { await release(); throw new DomainError('NOT_FOUND', 'File not found') }
         let fileHandle: Awaited<ReturnType<typeof open>>
         try {
@@ -759,11 +763,12 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
           throw new DomainError('STORAGE_UNAVAILABLE', 'A site revision file is unavailable', undefined, { cause: error })
         }
         const node = fileHandle.createReadStream()
-        const body = Readable.toWeb(node) as ReadableStream<Uint8Array>
+        // Count bytes, not chunks, so a slow download cannot prefetch the whole file.
+        const body = Readable.toWeb(node, { strategy: { highWaterMark: 64 * 1024, size: (chunk: Uint8Array) => chunk.byteLength } }) as ReadableStream<Uint8Array>
         const reader = body.getReader()
         const releasing = new ReadableStream<Uint8Array>({
-          async pull(controller) { try { const part = await reader.read(); if (part.done) { controller.close(); await release() } else controller.enqueue(part.value) } catch (error) { controller.error(error); await release() } },
-          async cancel(reason) { await reader.cancel(reason); await release() },
+          async pull(controller) { try { const part = await reader.read(); if (part.done) { controller.close(); await finishFile() } else controller.enqueue(part.value) } catch (error) { controller.error(error); await finishFile() } },
+          async cancel(reason) { try { await reader.cancel(reason) } finally { await finishFile() } },
         })
         return { ...entry, revisionId, body: releasing }
       },
@@ -824,6 +829,22 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
   }
 
   return {
+    async exportSite(principal, siteId, signal) {
+      if (shutdown.signal.aborted) throw new DomainError('BUSY', 'The installation is shutting down')
+      siteRow(principal.ownerId, siteId)
+      if (exports.size >= config.limits.maxConcurrentMutations) throw new DomainError('BUSY', 'Too many site exports are in progress')
+      let resolveClosed!: () => void
+      const closed = new Promise<void>((resolve) => { resolveClosed = resolve })
+      exports.add(closed)
+      const finish = () => { exports.delete(closed); resolveClosed() }
+      try {
+        const lease = await acquireRevision(() => {
+          const row = siteRow(principal.ownerId, siteId)
+          return { row, revisionId: row.active_revision_id }
+        }, 'revision')
+        return { revisionId: lease.revisionId, body: streamZip(lease, signal ? AbortSignal.any([signal, shutdown.signal]) : shutdown.signal, finish) }
+      } catch (error) { finish(); throw error }
+    },
     getOwnerSettings, setOwnerSettings,
     createSite,
     async listSites(principal, query = {}) {
@@ -874,6 +895,6 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       })
     },
     recover, runCleanup,
-    async close() { shutdown.abort(); await gate.close() },
+    async close() { shutdown.abort(); await gate.close(); await Promise.all(exports) },
   }
 }

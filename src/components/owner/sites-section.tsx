@@ -406,8 +406,15 @@ function SiteDetail({ siteId, csrfToken, returnPath, onChanged, onUnauthorized }
       </div>
 
       <div className="p-5 sm:p-6">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-900">File</h3>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-slate-900">Files</h3>
+          <a
+            className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
+            download
+            href={`/web/sites/${encodeURIComponent(site.id)}/export`}
+          >
+            Export ZIP
+          </a>
         </div>
         {error && <div className="mt-4"><ErrorMessage>{error}</ErrorMessage></div>}
         <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">

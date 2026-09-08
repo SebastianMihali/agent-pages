@@ -1,5 +1,36 @@
 import { expect, test } from '@playwright/test'
+import { readFile } from 'node:fs/promises'
+import { unzipSync } from 'fflate'
 import { appOrigin, bearer, createSite, issueKey, signIn } from './support'
+
+test('the owner downloads a complete ZIP from site detail on a narrow interface', async ({ browser, page }) => {
+  await signIn(page)
+  const key = await issueKey(page, `Export ${browser.browserType().name()} ${Date.now()}`)
+  const name = `ZIP ${browser.browserType().name()} ${Date.now()}`
+  const { site } = await createSite(page.request, key, name, [
+    { path: 'index.html', content: '<h1>Downloaded</h1>' }, { path: 'nested/caffè.txt', content: 'Caffè ☕' },
+  ])
+  await page.getByRole('button', { name: 'Sites' }).click()
+  await page.getByRole('button', { name: new RegExp(name) }).click()
+  await page.setViewportSize({ width: 390, height: 844 })
+  const link = page.getByRole('link', { name: 'Export ZIP' })
+  await expect(link).toBeVisible()
+  const head = await page.request.head(`/web/sites/${site.id}/export`)
+  expect(head.status()).toBe(405)
+  expect(head.headers().allow).toBe('GET')
+  const downloaded = page.waitForEvent('download')
+  await link.click()
+  const download = await downloaded
+  expect(download.suggestedFilename()).toBe(`site-${site.id}.zip`)
+  expect(await download.failure()).toBeNull()
+  const entries = unzipSync(await readFile((await download.path())!))
+  expect(Object.keys(entries).sort()).toEqual(['index.html', 'nested/caffè.txt'])
+  expect(new TextDecoder().decode(entries['index.html'])).toBe('<h1>Downloaded</h1>')
+  expect(new TextDecoder().decode(entries['nested/caffè.txt'])).toBe('Caffè ☕')
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+  expect((await page.request.get(`/api/sites/${site.id}`, { headers: bearer(key) })).ok()).toBe(true)
+  if (browser.browserType().name() === 'chromium') await page.screenshot({ path: 'test-results/export-mobile.png', fullPage: true })
+})
 
 test('the owner can sign in with the keyboard on a narrow production interface', async ({ browser, page }) => {
   console.log(`browser=${browser.browserType().name()} version=${browser.version()}`)

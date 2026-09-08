@@ -39,7 +39,7 @@ export default createServerEntry({
             try {
               let principal: Principal | undefined
               if (path === '/mcp' || path.startsWith('/api/')) principal = auth.readBearer(incoming)
-              else if (incoming.method !== 'GET') {
+              else if (incoming.method !== 'GET' && incoming.method !== 'HEAD') {
                 requireOrigin(incoming, config.appOrigin)
                 if (path !== '/web/login') auth.requireSession(readCookie(incoming, cookieNames(config).session))
               }

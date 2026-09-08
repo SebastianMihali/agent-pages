@@ -156,6 +156,7 @@ All site-management calls use the same domain operations. Zod validates inputs, 
 | List owned sites | `GET /api/sites` | `list_sites` |
 | Get owned site | `GET /api/sites/:siteId` | `get_site` |
 | List active-revision files | `GET /api/sites/:siteId/files` | `list_files` |
+| Export active revision as ZIP | `GET /api/sites/:siteId/export` | — (binary REST download) |
 | Read active-revision file | `GET /api/sites/:siteId/file?path=...` | `read_file` |
 | Batch upsert text files | `PUT /api/sites/:siteId/files` | `write_files` |
 | Batch delete files | `POST /api/sites/:siteId/files/delete` | `delete_files` |
@@ -191,6 +192,16 @@ REST errors: `{error: {code, message, retryable, requestId, details?}}`. Use equ
 | `QUOTA_EXCEEDED` | 409 | Free space or change configured limits |
 | `RATE_LIMITED` | 429 | Honor Retry-After |
 | `BUSY`, `STORAGE_UNAVAILABLE` | 503 | Bounded retry using the same operation ID |
+
+## Site ZIP export
+
+The owner can export a live site's active revision through `GET /api/sites/:siteId/export` (bearer-only) or `GET /web/sites/:siteId/export` (session-only), exposed by **Export ZIP** in site detail. Public visibility never grants export authorization. These application-host routes accept no query parameters; unsupported methods return 405 with `Allow: GET`. The web route rejects foreign Origin and cross-origin fetch metadata.
+
+One export holds one revision lease for all its manifest files, including files beyond listing pagination. Concurrent publication never mixes revisions. Preserve exact file bytes and relative paths, with no enclosing directory or internal metadata. Export neither mutates site state nor creates operation receipts. Accepted POSIX paths beginning with a drive-like prefix such as `a:notes.txt` receive `./` in the ZIP entry name to mark them explicitly relative; their extracted POSIX path is unchanged. Existing lifecycle checks run before each file is opened; deletion, expiration or making a public site private may interrupt an in-progress export. New requests to expired/deleted sites fail as normal owner reads do.
+
+Return `application/zip`, attachment filename `site-<siteId>.zip`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy: same-origin`, and `X-Agent-Pages-Revision`. Stored (uncompressed) ZIP entries avoid extra compression CPU. The encoder supports ZIP64 for installations with larger configured limits. Stream one file at a time with backpressure; never buffer or stage a complete archive. Limit concurrent exports across transports to `MAX_CONCURRENT_MUTATIONS`, independently of mutation jobs, until streams close. Exports time out after five minutes. Cancellation, request abort, errors, timeout and shutdown release streams, leases and export capacity; failures after response headers abort the body. Retrying starts a fresh export of the then-active revision.
+
+This is a content export, not an installation backup, import or rollback feature. The implementation and verification are tracked in [ZIP export](../zip-export/spec.md).
 
 ## Resource limits
 

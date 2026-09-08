@@ -5,7 +5,8 @@ import type { SiteModule } from './sites'
 import type { Access } from './access'
 import { localReturnPath } from './access'
 import { readBody, readJson } from './body'
-import { errorResponse, requireOrigin } from './errors'
+import { DomainError, errorResponse, requireOrigin } from './errors'
+import { exportResponse } from './site-export'
 import { siteOrigin } from './hosts'
 import { siteInputSchemas } from './site-input'
 import { cookieNames, json, parseInput, readCookie, type Auth } from './web-auth'
@@ -31,7 +32,7 @@ export function createSitesWebHandler(config: AppConfig, auth: Auth, sites: Site
     defaultExpiresInSeconds: z.number().int().refine((value) => allowedDefaultExpiresInSeconds.has(value)).nullable() })
   return async (request: Request): Promise<Response | null> => {
     const url = new URL(request.url)
-    const web = /^\/web\/sites(?:\/([a-f0-9]{32})(?:\/(files|visibility|expiration))?)?$/.exec(url.pathname)
+    const web = /^\/web\/sites(?:\/([a-f0-9]{32})(?:\/(files|visibility|expiration|export))?)?$/.exec(url.pathname)
     const ownerSettings = url.pathname === '/web/settings'
     const opening = /^\/sites\/([a-f0-9]{32})\/open$/.exec(url.pathname)
     if (!web && !opening && !ownerSettings) return null
@@ -57,6 +58,14 @@ export function createSitesWebHandler(config: AppConfig, auth: Auth, sites: Site
         auth.verifySessionCsrf(sessionToken, fields.csrfToken)
         const ticket = await access.issue(session!, opening[1], fields.returnPath)
         return postForm(`${siteOrigin(config, opening[1])}/_agent/session`, { ticket })
+      }
+      if (web?.[2] === 'export') {
+        requireOrigin(request, config.appOrigin, false)
+        const fetchSite = request.headers.get('sec-fetch-site')
+        if (fetchSite !== null && fetchSite !== 'same-origin' && fetchSite !== 'none') {
+          throw new DomainError('UNAUTHENTICATED', 'Request origin is not permitted')
+        }
+        return await exportResponse(request, sites, auth.requireSession(sessionToken), web[1])
       }
       if (request.method !== 'GET') requireOrigin(request, config.appOrigin)
       const session = auth.requireSession(sessionToken)

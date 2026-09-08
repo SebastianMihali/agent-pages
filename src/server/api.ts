@@ -5,6 +5,7 @@ import { DomainError, errorResponse, requireOrigin, type Principal } from './err
 import { readMultipart } from './multipart'
 import { parseSiteInput, siteInputSchemas } from './site-input'
 import type { SiteModule } from './sites'
+import { exportResponse } from './site-export'
 
 const responseHeaders = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: responseHeaders })
@@ -27,9 +28,10 @@ export function createApiHandler(config: AppConfig, auth: ReturnType<typeof crea
     try {
       requireOrigin(request, config.appOrigin, false)
       const principal = authenticatedPrincipal ?? auth.readBearer(request)
-      const match = /^\/api\/sites(?:\/([a-f0-9]{32})(?:\/(file|files|files\/delete|visibility|expiration))?)?$/.exec(url.pathname)
+      const match = /^\/api\/sites(?:\/([a-f0-9]{32})(?:\/(file|files|files\/delete|visibility|expiration|export))?)?$/.exec(url.pathname)
       if (!match) throw new DomainError('NOT_FOUND', 'Not found')
       const [, siteId, resource] = match
+      if (siteId && resource === 'export') return await exportResponse(request, sites, principal, siteId)
       const query = queryInput(url)
       if (Object.hasOwn(query, 'siteId')) throw new DomainError('INVALID_INPUT', 'Site identity belongs in the route path')
       if (request.method !== 'GET' && request.method !== 'HEAD' && url.search) {

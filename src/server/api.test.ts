@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { unzipSync } from 'fflate'
 import { createAuth } from './auth'
 import { createApiHandler } from './api'
 import { parseConfig } from './config'
@@ -39,6 +40,34 @@ async function fixture() {
 }
 
 describe('authenticated REST site operations', () => {
+  it('exports a private site as a bearer-only ZIP attachment with safe headers', async () => {
+    const { send, handle, config, key, auth } = await fixture()
+    const { site } = await (await send('/api/sites', 'POST', { operationId: crypto.randomUUID(), name: 'Unsafe " filename',
+      files: [{ path: 'index.html', content: 'private export' }] })).json()
+    const path = `/api/sites/${site.id}/export`
+    const response = await send(path)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('application/zip')
+    expect(response.headers.get('content-disposition')).toBe(`attachment; filename="site-${site.id}.zip"`)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(response.headers.get('cross-origin-resource-policy')).toBe('same-origin')
+    expect(response.headers.get('x-agent-pages-revision')).toBe(site.revisionId)
+    const entries = unzipSync(new Uint8Array(await response.arrayBuffer()))
+    expect(new TextDecoder().decode(entries['index.html'])).toBe('private export')
+    for (const suffix of ['?revisionId=other', '?ownerId=other', '?x=1&x=2']) expect((await send(path + suffix)).status).toBe(400)
+    for (const method of ['POST', 'PUT', 'HEAD', 'DELETE']) {
+      const wrongMethod = await send(path, method)
+      expect(wrongMethod.status).toBe(405)
+      expect(wrongMethod.headers.get('allow')).toBe('GET')
+    }
+    const deniedHeaders: Record<string, string>[] = [{}, { cookie: '__Host-agp-session=fixture' }, { authorization: `Bearer ${key}`, origin: 'https://evil.sites.example.com' }]
+    for (const headers of deniedHeaders) {
+      expect((await handle(new Request(config.appOrigin + path, { headers })))!.status).toBe(401)
+    }
+    auth.revokeKey({ ownerId: auth.ownerId }, auth.listKeys({ ownerId: auth.ownerId })[0].id)
+    expect((await send(path)).status).toBe(401)
+  })
   it('creates a private site and reads its metadata and raw bytes through bearer-authenticated routes', async () => {
     const { send } = await fixture()
     const response = await send('/api/sites', 'POST', { operationId: crypto.randomUUID(), name: 'REST fixture',

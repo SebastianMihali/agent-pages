@@ -79,6 +79,10 @@ export interface RevisionLease {
 }
 
 export interface SiteModule {
+  exportSite(principal: Principal, siteId: string, signal?: AbortSignal): Promise<Readonly<{
+    revisionId: string
+    body: ReadableStream<Uint8Array>
+  }>>
   getOwnerSettings(principal: Principal): Promise<OwnerSettings>
   setOwnerSettings(principal: Principal, settings: OwnerSettings): Promise<OwnerSettings>
   createSite(principal: Principal, command: Readonly<{

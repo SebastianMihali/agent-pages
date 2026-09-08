@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { unzipSync } from 'fflate'
 import { createAccess } from './access'
 import { createAuth } from './auth'
 import { hashPassword } from './auth/password'
@@ -34,10 +35,43 @@ async function fixture() {
     if (!response) throw new Error('Expected a web response')
     return response
   }
-  return { auth, csrfToken: login.session.csrfToken, db, send, sites }
+  return { auth, csrfToken: login.session.csrfToken, db, send, sites, handle, config, cookie }
 }
 
 describe('owner site web operations', () => {
+  it('downloads a ZIP with the owner session and rejects foreign requests and bearer-only access', async () => {
+    const { auth, db, send, sites, handle, config, cookie } = await fixture()
+    try {
+      const { site } = await sites.createSite({ ownerId: auth.ownerId }, { operationId: crypto.randomUUID(), name: 'Web ZIP',
+        files: [{ path: 'index.html', content: 'owner download' }] })
+      const path = `/web/sites/${site.id}/export`
+      const response = await send(path)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-disposition')).toBe(`attachment; filename="site-${site.id}.zip"`)
+      const entries = unzipSync(new Uint8Array(await response.arrayBuffer()))
+      expect(new TextDecoder().decode(entries['index.html'])).toBe('owner download')
+      const key = auth.createKey({ ownerId: auth.ownerId }, 'Web boundary').key
+      const deniedHeaders: Record<string, string>[] = [{}, { authorization: `Bearer ${key}` },
+        { cookie, origin: 'https://evil.sites.example.com' }, { cookie, 'sec-fetch-site': 'same-site' },
+        { cookie, 'sec-fetch-site': 'cross-site' }]
+      for (const headers of deniedHeaders) {
+        expect((await handle(new Request(config.appOrigin + path, { headers })))!.status).toBe(401)
+      }
+      expect((await send(path + '?revisionId=other')).status).toBe(400)
+      expect((await send(path + '?x=1&x=2')).status).toBe(400)
+      const wrongMethod = await send(path, 'POST')
+      expect(wrongMethod.status).toBe(405)
+      expect(wrongMethod.headers.get('allow')).toBe('GET')
+      const head = await handle(new Request(config.appOrigin + path, { method: 'HEAD', headers: { cookie, 'sec-fetch-site': 'same-origin' } }))
+      expect(head!.status).toBe(405)
+      expect(head!.headers.get('allow')).toBe('GET')
+      const download = await send(path)
+      const restDownload = await sites.exportSite({ ownerId: auth.ownerId }, site.id)
+      expect((await send(path)).status).toBe(503)
+      await download.body!.cancel()
+      await restDownload.body.cancel()
+    } finally { await sites.close(); db.close() }
+  })
   it('gets and sets default expiration and changes a site expiration', async () => {
     const { auth, csrfToken, db, send, sites } = await fixture()
     expect(await (await send('/web/settings')).json()).toEqual({ defaultExpiresInSeconds: 604_800 })

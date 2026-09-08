@@ -53,9 +53,10 @@ The first useful release must let an owner:
 4. List/read selected files, then apply a complete batch update at the same URL.
 5. Make the site public explicitly and later make it private again.
 6. Delete files or the site, choose the default expiration for new sites and change a live site's expiration.
-7. Repeat the workflow from **both Codex and Claude Code**.
+7. Export a live site’s active revision as a ZIP from the dashboard or authenticated REST.
+8. Repeat the workflow from **both Codex and Claude Code**.
 
-The web interface is limited to login/logout, the owner's site list and detail, opening a site, expiration and visibility controls and personal API-key management. File upload is initially through REST/MCP; browser drag-and-drop, ZIP import and an editor are later work.
+The web interface provides ZIP export, login/logout, the owner's site list and detail, opening a site, expiration and visibility controls and personal API-key management. File upload is initially through REST/MCP; browser drag-and-drop, ZIP import and an editor are later work.
 
 Integrity and access checks are part of the MVP: complete revision publication, optimistic concurrency, idempotency, resource limits, expiration enforcement, restart recovery and a tested backup/restore procedure.
 
@@ -72,7 +73,7 @@ One domain module owns creation, publication, visibility, quotas and deletion. T
 | Stage | Additions | Reason to start |
 | --- | --- | --- |
 | Usability | Browser multi-file upload, ZIP import, SPA mode | Real workflows are blocked by the initial upload or routing model |
-| Recovery | Previous-revision restore, site export | Owners need to undo edits or move content independently |
+| Recovery | Previous-revision restore | Owners need to undo edits or move content independently |
 | Distribution | Public Docker image, installation improvements, license selection before distribution | Fresh installations are repeatable and security checks pass |
 | Storage and workflow | CLI, S3-compatible storage, snapshots | Measured operations or storage constraints justify them |
 
