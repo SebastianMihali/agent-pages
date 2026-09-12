@@ -147,7 +147,7 @@ docker compose down
 
 In Coolify, create one application from the repository's `Dockerfile`, set container port `3000`, add persistent storage at `/data`, and configure the production variables as runtime variables. Set the application replica count to one. Route the exact `APP_ORIGIN` hostname and the wildcard `*.CONTENT_BASE_DOMAIN` hostname to that same application; both routes need HTTPS, while the container itself continues to listen over HTTP on the private network. Confirm `/health/ready` before enabling traffic. The image and host dispatch can be verified locally, but wildcard DNS, certificate issuance, and Coolify proxy behavior must be checked on the actual deployment.
 
-When the proxy runs in a container network, connect it to port 3000 without publishing that port publicly. The image health check probes liveness. Configure deployment readiness against `/health/ready` on the internal host; readiness becomes successful only after the installation lock, migrations, storage recovery, and startup cleanup complete.
+When the proxy runs in a container network, connect it to port 3000 without publishing that port publicly. The image health check probes readiness using Node, so it does not depend on curl or wget in the runtime image. Configure deployment readiness against `/health/ready` on the internal host; readiness becomes successful only after the installation lock, migrations, storage recovery, and startup cleanup complete.
 
 ## Reverse proxy
 
