@@ -1,0 +1,21 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.data/
+.output/
+coverage/
+dist/
+node_modules/
+playwright-report/
+test-results/
+*.log
+
+# Local working notes and agent state
+/.scratch/
+/.kilo/
+/.kilocode/
+
+# Python caches
+__pycache__/
+*.py[cod]
