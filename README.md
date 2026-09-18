@@ -4,6 +4,59 @@ Self-hosted static hosting for coding agents and their owners. Create a site, re
 
 **Built almost entirely through vibe coding.**
 
+[Visual tour](#visual-tour) · [How it works](#how-it-works) · [Install](#install-with-docker-compose) · [Connect an agent](#connect-an-agent)
+
+## Visual tour
+
+The owner dashboard brings active sites, public/private visibility, file totals and upcoming expirations into one workspace.
+
+![Agent Pages Overview showing four active sites, public and private counts, recent updates and an upcoming expiration](docs/screenshots/overview.png)
+
+These are screenshots of the running application with disposable demo data. The local addresses are examples, and the API key screen shows only a masked prefix.
+
+<details>
+<summary><strong>Manage a site: files, visibility, expiration and ZIP export</strong></summary>
+
+Select a site to see its stable URL, current version and files. Upload files or a folder, change its expiration, explicitly make it public, or export its active content as a ZIP.
+
+![Site detail with a private site, expiration controls, file uploads, ZIP export and the file list](docs/screenshots/sites.png)
+
+</details>
+
+<details>
+<summary><strong>Inspect and edit source in the file workspace</strong></summary>
+
+Open a file from the site detail, then choose **Edit file** to modify supported text. **Save changes** publishes immediately at the existing URL. HTML is displayed as source; **Open page** opens the rendered content on its separate site origin.
+
+![File workspace editing index.html with syntax highlighting, a file list and Save changes controls](docs/screenshots/editor.png)
+
+</details>
+
+<details>
+<summary><strong>Connect coding agents through API keys</strong></summary>
+
+Create a labeled key for each agent client and use it with MCP or REST. The full key is shown only once; the dashboard lets you revoke it later. Each key has the owner's site-management permissions. See the [agent setup guide](docs/agent-setup.md) for configuration.
+
+![API keys screen with key creation and a labeled demo key showing only its masked prefix](docs/screenshots/keys.png)
+
+</details>
+
+<details>
+<summary><strong>Open the hosted result</strong></summary>
+
+Visitors see the uploaded website on its own origin. This example is demo content hosted by Agent Pages, not a built-in template or part of the dashboard. Private sites require the owner's authenticated access; explicitly public sites can be viewed without signing in.
+
+![A rendered demo website hosted by Agent Pages, with a studio introduction and three service columns](docs/screenshots/hosted-site.png)
+
+</details>
+
+## How it works
+
+1. **Create a site.** Upload static files or a folder containing a root `index.html` from the dashboard, or let an agent create it through MCP or REST. Every new site starts private and receives a stable URL.
+2. **Review the result.** Choose **Open site** to view it, or inspect its files in the dashboard. Uploaded pages run on a separate origin from the owner workspace.
+3. **Update in place.** Upload changed files, save an edit in the file workspace, or ask your agent to publish an update. Complete revisions become active atomically; the site's URL and visibility are preserved. Version checks prevent silently overwriting a concurrent update.
+4. **Control access and lifetime.** Keep the site private or explicitly make it public. Set or remove its expiration while it is live, export its files, or delete it when finished.
+
 Sites start private to their owner. New sites inherit the owner's expiration preset unless creation supplies an explicit expiration, and a live site's expiration can be changed later. An explicit visibility change makes a site public, and it can be made private again. The application and each site's uploaded code run on separate browser origins. Private sharing, multiple accounts, ZIP imports, SPA fallback and rollback are outside this MVP.
 
 ## Install with Docker Compose
