@@ -127,7 +127,11 @@ Agents can use `DELETE /api/sites/:siteId` with a bearer API key and a JSON body
 
 The application includes an MCP server at `https://app.example.com/mcp` and a bearer-authenticated REST API at `https://app.example.com/api`. Create a dedicated API key in the dashboard and supply it through the agent process environment as `AGENT_PAGES_API_KEY`.
 
-Follow [Agent setup](docs/agent-setup.md) to install the bundled skill, configure a client and copy a ready-to-use instruction for your agent. The same guide includes MCP client configuration; see [REST API](docs/api.md) for endpoints, payloads, uploads and retry rules. Keep credentials out of prompts and uploaded site files.
+```sh
+npx skills add https://github.com/SebastianMihali/agent-pages.git
+```
+
+Follow [Agent setup](docs/agent-setup.md) to configure MCP or REST and copy a ready-to-use instruction for your agent. See [REST API](docs/api.md) for endpoints, payloads, uploads and retry rules. Keep credentials out of prompts and uploaded site files.
 
 ## Documentation
 

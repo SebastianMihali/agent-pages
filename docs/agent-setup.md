@@ -4,45 +4,9 @@ The repository includes an `agent-pages` skill that teaches a coding agent how t
 
 ## 1. Install the bundled skill
 
-Copy the complete `skills/agent-pages` directory so future supporting files remain available. Run one of these commands from this repository.
-
-### Codex
-
-Project scope, shared with this repository:
-
 ```sh
-mkdir -p .agents/skills
-cp -R skills/agent-pages .agents/skills/
+npx skills add https://github.com/SebastianMihali/agent-pages.git
 ```
-
-Personal scope, available in every repository:
-
-```sh
-mkdir -p "$HOME/.agents/skills"
-cp -R skills/agent-pages "$HOME/.agents/skills/"
-```
-
-Codex scans `.agents/skills` from the working directory to the repository root and `$HOME/.agents/skills` for personal skills. It detects changes automatically; restart it if the skill does not appear. Use `/skills` or type `$agent-pages` to select it. These locations are documented in [official OpenAI skill documentation](https://developers.openai.com/codex/skills).
-
-### Claude Code
-
-Project scope:
-
-```sh
-mkdir -p .claude/skills
-cp -R skills/agent-pages .claude/skills/
-```
-
-Personal scope:
-
-```sh
-mkdir -p "$HOME/.claude/skills"
-cp -R skills/agent-pages "$HOME/.claude/skills/"
-```
-
-Invoke it as `/agent-pages`, or let Claude choose it from the description. Claude Code watches existing skill directories for changes; restart it if the top-level skills directory was created after the session started. See the [Claude Code skills documentation](https://code.claude.com/docs/en/skills).
-
-Choose project scope when a team should get the same publishing workflow from version control. Choose personal scope when this installation is only for your own agents. Avoid duplicate copies with the same skill name in both scopes.
 
 ## 2. Create and load an API key
 
