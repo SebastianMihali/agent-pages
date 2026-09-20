@@ -76,7 +76,7 @@ Replace these examples with your own domain. Configure HTTPS for the application
 
 ### 2. Get the source and create the owner credentials
 
-Clone the repository using Git credentials authorized to access it while it remains private, then work from its root:
+Clone the repository, then work from its root:
 
 ```sh
 git clone https://github.com/SebastianMihali/agent-pages.git
