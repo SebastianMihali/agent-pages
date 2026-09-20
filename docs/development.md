@@ -37,7 +37,7 @@ pnpm test:browser
 
 Playwright builds the production bundle and manages its own HTTPS fixture. It needs `openssl` and resolution of `*.localhost` to loopback. The fixture generates temporary credentials, storage and a one-day certificate. Browser tests ignore trust errors only for this fixture. Use its managed server rather than starting a second server on the same ports.
 
-`pnpm test:browser:dev` runs the separate development-mode editor regression. It is not included in CI. The optional `pnpm exec tsx scripts/mcp-client-smoke.ts both` verifies installed, authenticated Codex and Claude Code clients against isolated fixtures. It does not modify global client configuration.
+`pnpm test:browser:dev` runs the separate development-mode regressions: the file editor under StrictMode, and site hosts serving their own styles, scripts and images instead of the Vite development server's. It is not included in CI. The optional `pnpm exec tsx scripts/mcp-client-smoke.ts both` verifies installed, authenticated Codex and Claude Code clients against isolated fixtures. It does not modify global client configuration.
 
 `pnpm exec tsx scripts/benchmark-publication.ts` measures publication against isolated fixtures. Measurements depend on the machine and storage; record those conditions when comparing changes.
 
