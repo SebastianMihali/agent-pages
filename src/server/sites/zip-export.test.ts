@@ -10,10 +10,10 @@ import { createSiteModule, type SiteModuleOptions } from '.'
 const dispose: Array<() => Promise<void>> = []
 afterEach(async () => { vi.useRealTimers(); for (const close of dispose.splice(0)) await close() })
 
-async function fixture(options: SiteModuleOptions = {}) {
+async function fixture(options: SiteModuleOptions = {}, overrides: Record<string, string> = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-pages-export-'))
   const config = parseConfig({ NODE_ENV: 'test', APP_ORIGIN: 'https://app.example.com', CONTENT_BASE_DOMAIN: 'sites.example.com',
-    DATA_DIR: dataDir, ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'aa'.repeat(16)}$${'bb'.repeat(32)}`, MIN_FREE_DISK_MB: '1' })
+    DATA_DIR: dataDir, ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'aa'.repeat(16)}$${'bb'.repeat(32)}`, MIN_FREE_DISK_MB: '1', ...overrides })
   const db = openDatabase(dataDir)
   const sites = await createSiteModule(config, db, options)
   dispose.push(async () => { await sites.close(); db.close(); await rm(dataDir, { recursive: true, force: true }) })
@@ -85,7 +85,7 @@ it.each(['abort', 'timeout', 'shutdown'])('interrupts a download and releases it
 })
 
 it('pins all files beyond a listing page to one revision until the archive is consumed', async () => {
-  const { sites, owner } = await fixture()
+  const { sites, owner } = await fixture({}, { REVISION_HISTORY_LIMIT: '0' })
   const { site } = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Snapshot', expiresInSeconds: null,
     files: [{ path: 'a.txt', content: 'a'.repeat(1024 * 1024) }, { path: 'index.html', content: 'original' }] })
   const added = await sites.writeFiles(owner, { operationId: crypto.randomUUID(), siteId: site.id, expectedVersion: 1,

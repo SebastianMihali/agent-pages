@@ -39,6 +39,48 @@ async function fixture(overrides: Record<string, string> = {}, options: SiteModu
 }
 
 describe('owner site web operations', () => {
+  it('lists and restores retained revisions with session auth, origin and CSRF checks', async () => {
+    const { auth, csrfToken, db, send, sites, handle, config, cookie } = await fixture()
+    const owner = { ownerId: auth.ownerId }
+    try {
+      const { site } = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Web history',
+        files: [{ path: 'index.html', content: 'first' }] })
+      await sites.setVisibility(owner, { siteId: site.id, operationId: crypto.randomUUID(), expectedVersion: 1, visibility: 'public' })
+      const changed = await sites.writeFiles(owner, { siteId: site.id, operationId: crypto.randomUUID(), expectedVersion: 2,
+        files: [{ path: 'index.html', content: 'second' }] })
+      const base = `/web/sites/${site.id}`
+      const history = await send(`${base}/revisions`)
+      expect(history.status).toBe(200)
+      expect((await history.json()).revisions).toEqual(expect.arrayContaining([
+        expect.objectContaining({ revisionId: site.revisionId, active: false }),
+        expect.objectContaining({ revisionId: changed.site.revisionId, active: true }),
+      ]))
+      const command = { csrfToken, operationId: crypto.randomUUID(), expectedVersion: 3, revisionId: site.revisionId }
+      const key = auth.createKey(owner, 'Web history bearer').key
+      for (const path of [`${base}/revisions`, `${base}/restore`]) {
+        const method = path.endsWith('restore') ? 'POST' : 'GET'
+        const deniedHeaders: Record<string, string>[] = [{}, { authorization: `Bearer ${key}` },
+          { cookie, 'sec-fetch-site': 'same-site' }, { cookie, origin: 'https://evil.sites.example.com' }]
+        for (const headers of deniedHeaders) {
+          expect((await handle(new Request(config.appOrigin + path, { method, headers,
+            ...(method === 'POST' ? { body: JSON.stringify(command) } : {}) })))!.status).toBe(401)
+        }
+      }
+      expect((await send(`${base}/revisions?x=1`)).status).toBe(400)
+      expect((await send(`${base}/revisions?x=1&x=2`)).status).toBe(400)
+      expect((await send(`${base}/restore?x=1`, 'POST', command)).status).toBe(400)
+      expect((await send(`${base}/restore`, 'POST', { ...command, csrfToken: 'wrong' })).status).toBe(401)
+      expect((await send(`${base}/restore`, 'POST', { ...command, unexpected: true })).status).toBe(400)
+      expect((await send(`${base}/restore`, 'POST', { ...command, revisionId: 'bad' })).status).toBe(400)
+      const restored = await send(`${base}/restore`, 'POST', command)
+      expect(restored.status).toBe(200)
+      const receipt = await restored.json()
+      expect(receipt.site).toMatchObject({ revisionId: site.revisionId, version: 4, visibility: 'public' })
+      expect(await (await send(`${base}/restore`, 'POST', command)).json()).toEqual(receipt)
+      expect((await send(`${base}/restore`, 'GET')).status).toBe(405)
+      expect((await send(`${base}/revisions`, 'POST')).status).toBe(405)
+    } finally { await sites.close(); db.close() }
+  })
   it('downloads a ZIP with the owner session and rejects foreign requests and bearer-only access', async () => {
     const { auth, db, send, sites, handle, config, cookie } = await fixture()
     try {
@@ -136,7 +178,7 @@ describe('owner dashboard and file editor', () => {
     const owner = { ownerId: auth.ownerId }
     try {
       expect(await (await send('/web/overview')).json()).toEqual({ activeSites: 0, publicSites: 0, privateSites: 0,
-        fileCount: 0, sizeBytes: 0, expiringSoon: 0, recentSites: [], expiringSites: [] })
+        fileCount: 0, sizeBytes: 0, historySizeBytes: 0, expiringSoon: 0, recentSites: [], expiringSites: [] })
       const live: SiteView[] = []
       for (let index = 0; index < 53; index += 1) {
         instant = new Date(instant.getTime() + 1000)
@@ -226,7 +268,7 @@ describe('owner dashboard and file editor', () => {
   })
 
   it('returns HTML and SVG as inert JSON and pins file bytes to the reported site version during publication', async () => {
-    const { auth, db, send, sites } = await fixture()
+    const { auth, db, send, sites } = await fixture({ REVISION_HISTORY_LIMIT: '0' })
     const owner = { ownerId: auth.ownerId }
     try {
       const html = '<script>window.stolen = document.cookie</script>'
@@ -285,6 +327,32 @@ describe('owner dashboard and file editor', () => {
       for (const filePath of ['index.html', 'image.svg', 'font.woff2']) {
         expect((await send(`${path}?${new URLSearchParams({ path: filePath, mode: 'preview' })}`)).status).toBe(415)
       }
+    } finally { await sites.close(); db.close() }
+  })
+
+  it('downloads and previews retained bytes while the editor stays on the current revision', async () => {
+    const { auth, db, send, sites } = await fixture()
+    const owner = { ownerId: auth.ownerId }
+    try {
+      const oldImage = Uint8Array.from([137, 80, 78, 71, 1])
+      const { site } = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Historical reads',
+        files: [{ path: 'index.html', content: 'old' }, { path: 'picture.png', body: oldImage, maximumBytes: oldImage.length }] })
+      await sites.writeFiles(owner, { siteId: site.id, operationId: crypto.randomUUID(), expectedVersion: 1,
+        files: [{ path: 'index.html', content: 'new' }, { path: 'picture.png', body: Uint8Array.from([137, 80, 78, 71, 2]), maximumBytes: 5 }] })
+      const path = `/web/sites/${site.id}/file`
+      expect((await (await send(`${path}?path=index.html`)).json()).content).toBe('new')
+      expect((await send(`${path}?path=index.html&revisionId=${site.revisionId}`)).status).toBe(400)
+      const download = await send(`${path}?path=index.html&mode=download&revisionId=${site.revisionId}`)
+      expect(download.status).toBe(200)
+      expect(download.headers.get('content-disposition')).toContain('attachment')
+      expect(download.headers.get('cache-control')).toBe('no-store')
+      expect(download.headers.get('x-content-type-options')).toBe('nosniff')
+      expect(await download.text()).toBe('old')
+      const preview = await send(`${path}?path=picture.png&mode=preview&revisionId=${site.revisionId}`)
+      expect(preview.status).toBe(200)
+      expect(preview.headers.get('content-type')).toBe('image/png')
+      expect(new Uint8Array(await preview.arrayBuffer())).toEqual(oldImage)
+      expect((await send(`${path}?path=index.html&mode=preview&revisionId=${site.revisionId}`)).status).toBe(415)
     } finally { await sites.close(); db.close() }
   })
 

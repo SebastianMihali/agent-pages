@@ -1,4 +1,4 @@
-import type { ManifestEntry, OwnerSettings, SiteView } from '../../server/sites'
+import type { ManifestEntry, OwnerSettings, RevisionHistory, RevisionView, SiteView } from '../../server/sites'
 import type { PublicationLimits } from './publication-plan'
 
 export type { OwnerSettings }
@@ -18,6 +18,9 @@ export type FileListResponse = {
   files: ManifestEntry[]
   cursor: string | null
 }
+
+export type RevisionSummary = RevisionView
+export type RevisionListResponse = RevisionHistory
 
 export type ApiKeySummary = {
   id: string

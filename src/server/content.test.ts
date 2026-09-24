@@ -9,6 +9,45 @@ import { openDatabase } from './db'
 import { createSiteModule } from './sites'
 import { createAccess } from './access'
 import { createContentHandler } from './content'
+import { createHostHandler } from './hosts'
+import { createApiHandler } from './api'
+
+it('serves only the active public revision and keeps management routes on the application host', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agp-content-history-'))
+  const db = openDatabase(directory)
+  const config = parseConfig({ DATA_DIR: directory, APP_ORIGIN: 'https://app.example.com',
+    CONTENT_BASE_DOMAIN: 'sites.example.com', ADMIN_USERNAME: 'owner',
+    ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'a'.repeat(32)}$${'b'.repeat(64)}` })
+  const auth = createAuth(db, config)
+  const sites = await createSiteModule(config, db)
+  try {
+    const principal = { ownerId: auth.ownerId }
+    const { site } = await sites.createSite(principal, { operationId: randomUUID(), name: 'Public history',
+      files: [{ path: 'index.html', content: 'old public bytes' }] })
+    await sites.setVisibility(principal, { siteId: site.id, operationId: randomUUID(), expectedVersion: 1, visibility: 'public' })
+    await sites.writeFiles(principal, { siteId: site.id, operationId: randomUUID(), expectedVersion: 2,
+      files: [{ path: 'index.html', content: 'current public bytes' }] })
+    const api = createApiHandler(config, auth, sites)
+    const content = createContentHandler(config, sites, createAccess(db, auth, sites))
+    const handle = createHostHandler(config, { app: async (request) => await api(request) ?? new Response('Not found', { status: 404 }),
+      content, ready: () => true })
+    const key = auth.createKey(principal, 'History test').key
+    const query = `?revisionId=${site.revisionId}`
+    for (const suffix of ['', query]) {
+      const response = await handle(new Request(`${site.url}/index.html${suffix}`))
+      expect(response.status).toBe(200)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(await response.text()).toBe('current public bytes')
+    }
+    const managementPath = `/api/sites/${site.id}/revisions`
+    const appResponse = await handle(new Request(`${config.appOrigin}${managementPath}`, { headers: { authorization: `Bearer ${key}` } }))
+    expect(appResponse.status).toBe(200)
+    expect((await appResponse.json()).revisions).toHaveLength(2)
+    const contentResponse = await handle(new Request(`${site.url}${managementPath}`, { headers: { authorization: `Bearer ${key}` } }))
+    expect(contentResponse.status).toBe(404)
+    expect(contentResponse.headers.get('content-type')).not.toBe('application/json')
+  } finally { await sites.close(); db.close(); await rm(directory, { recursive: true, force: true }) }
+})
 
 it('authorizes before file routing and serves public nested routes, MIME and HEAD consistently', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agp-content-'))

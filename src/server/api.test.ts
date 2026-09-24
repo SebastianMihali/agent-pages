@@ -40,6 +40,47 @@ async function fixture() {
 }
 
 describe('authenticated REST site operations', () => {
+  it('lists retained revisions and restores one with strict input, owner auth and replay', async () => {
+    const { send, handle, config } = await fixture()
+    const created = await (await send('/api/sites', 'POST', { operationId: crypto.randomUUID(), name: 'History',
+      files: [{ path: 'index.html', content: 'first' }] })).json()
+    const base = `/api/sites/${created.site.id}`
+    const changed = await (await send(`${base}/files`, 'PUT', { operationId: crypto.randomUUID(), expectedVersion: 1,
+      files: [{ path: 'index.html', content: 'second' }] })).json()
+    const listed = await send(`${base}/revisions`)
+    expect(listed.status).toBe(200)
+    expect(listed.headers.get('cache-control')).toBe('no-store')
+    const history = await listed.json()
+    expect(history).toMatchObject({ site: changed.site, revisions: expect.arrayContaining([
+      expect.objectContaining({ revisionId: created.site.revisionId, active: false }),
+      expect.objectContaining({ revisionId: changed.site.revisionId, active: true }),
+    ]) })
+    expect(await (await send(`${base}/file?path=index.html&revisionId=${created.site.revisionId}`)).text()).toBe('first')
+    const command = { operationId: crypto.randomUUID(), expectedVersion: 2, revisionId: created.site.revisionId }
+    const restored = await send(`${base}/restore`, 'POST', command)
+    expect(restored.status).toBe(200)
+    const receipt = await restored.json()
+    expect(receipt.site).toMatchObject({ version: 3, revisionId: created.site.revisionId })
+    expect(await (await send(`${base}/restore`, 'POST', command)).json()).toEqual(receipt)
+    expect(await (await send(`${base}/file?path=index.html`)).text()).toBe('first')
+    expect((await send(`${base}/restore`, 'POST', { ...command, operationId: crypto.randomUUID() })).status).toBe(409)
+    for (const body of [{ ...command, unexpected: true }, { ...command, revisionId: 'bad' }]) {
+      expect((await send(`${base}/restore`, 'POST', body)).status).toBe(400)
+    }
+    for (const path of [`${base}/revisions?unexpected=1`, `${base}/revisions?siteId=${created.site.id}`,
+      `${base}/revisions?x=1&x=2`]) expect((await send(path)).status).toBe(400)
+    for (const [path, method, allow] of [[`${base}/revisions`, 'POST', 'GET'], [`${base}/restore`, 'GET', 'POST']]) {
+      const response = await send(path, method)
+      expect(response.status).toBe(405)
+      expect(response.headers.get('allow')).toBe(allow)
+    }
+    for (const path of [`${base}/revisions`, `${base}/restore`]) {
+      expect((await handle(new Request(config.appOrigin + path, { method: path.endsWith('restore') ? 'POST' : 'GET',
+        headers: { cookie: '__Host-agp-session=fixture' },
+        ...(path.endsWith('restore') ? { body: JSON.stringify(command) } : {}) })))!.status).toBe(401)
+    }
+    expect((await send(`${base}/revisions`)).status).toBe(200)
+  })
   it('exports a private site as a bearer-only ZIP attachment with safe headers', async () => {
     const { send, handle, config, key, auth } = await fixture()
     const { site } = await (await send('/api/sites', 'POST', { operationId: crypto.randomUUID(), name: 'Unsafe " filename',

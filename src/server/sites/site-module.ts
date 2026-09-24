@@ -40,6 +40,10 @@ type SiteRow = {
 type ReceiptRow = { fingerprint_sha256: string; result_json: string }
 type ReceiptHeader = { kind: string; target_site_id: string | null }
 type StoredManifest = { revisionId: string; files: ManifestEntry[] }
+type RevisionRow = {
+  id: string; size_bytes: number; file_count: number; created_at_ms: number
+  published_version: number | null; last_activated_version: number | null; last_activated_at_ms: number
+}
 
 class Mutex {
   private tail = Promise.resolve()
@@ -118,6 +122,17 @@ function migrate(sql: AppDatabase['sql']) {
     CREATE TABLE IF NOT EXISTS owner_settings (owner_id TEXT PRIMARY KEY, default_expires_in_seconds INTEGER, updated_at_ms INTEGER NOT NULL);
     INSERT OR IGNORE INTO __migrations(name) VALUES ('0004_owner_settings');
   `)
+  sql.transaction(() => {
+    if (sql.prepare('SELECT 1 FROM __migrations WHERE name=?').get('0005_revision_history')) return
+    sql.exec(`
+      ALTER TABLE site_revisions ADD COLUMN published_version INTEGER;
+      ALTER TABLE site_revisions ADD COLUMN last_activated_version INTEGER;
+      ALTER TABLE site_revisions ADD COLUMN last_activated_at_ms INTEGER;
+      UPDATE site_revisions SET last_activated_at_ms=created_at_ms;
+      CREATE INDEX site_revisions_history ON site_revisions(site_id,cleanup_after_ms,last_activated_version);
+      INSERT INTO __migrations(name) VALUES ('0005_revision_history');
+    `)
+  })()
 }
 
 function opaqueId() { return randomBytes(16).toString('hex') }
@@ -230,6 +245,15 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     updatedAt: iso(row.updated_at_ms), expiresAt: row.expires_at_ms === null ? null : iso(row.expires_at_ms), sizeBytes: row.size_bytes, fileCount: row.file_count,
   })
   const revisionPath = (siteId: string, revisionId: string) => join(sitesRoot, siteId, 'revisions', revisionId)
+  // Called inside the publication/startup transaction. Retired revisions are
+  // never readmitted, even if configuration later increases the history limit.
+  const applyRetention = (siteId: string, timestamp: number) => {
+    sql.prepare(`UPDATE site_revisions SET cleanup_after_ms=? WHERE site_id=? AND id IN (
+      SELECT r.id FROM site_revisions r JOIN sites s ON s.id=r.site_id
+      WHERE r.site_id=? AND r.id<>s.active_revision_id AND r.cleanup_after_ms IS NULL
+      ORDER BY r.last_activated_version DESC,r.created_at_ms DESC,r.id DESC LIMIT -1 OFFSET ?
+    )`).run(timestamp, siteId, siteId, config.limits.revisionHistoryLimit)
+  }
   // Revisions are immutable, so a validated manifest stays correct until the
   // revision is reclaimed. Every content request needs one; reading and
   // revalidating it from disk per request was the serving hot path.
@@ -424,6 +448,19 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
       released = true; reservedActiveBytes -= activeIncrease; reservedStoredBytes -= storedBytes; if (creating) reservedSites -= 1
     })
   })
+  // Restore writes metadata only. Disk/stored admission would unnecessarily
+  // block recovery at full capacity; only an increase in active bytes is reserved.
+  const reserveRestoreQuota = (siteSize: number, previousSize: number) => quotaGate.run(async () => {
+    if (siteSize > config.limits.maxSiteBytes) throw new DomainError('QUOTA_EXCEEDED', 'Site exceeds its size limit')
+    const increase = Math.max(0, siteSize - previousSize)
+    const active = (sql.prepare("SELECT coalesce(sum(size_bytes),0) total FROM sites WHERE lifecycle='active'").get() as { total: number }).total
+    if (increase && active + reservedActiveBytes + increase > config.limits.maxTotalSiteBytes) throw new DomainError('QUOTA_EXCEEDED', 'Total active site storage limit exceeded')
+    reservedActiveBytes += increase
+    let released = false
+    return () => quotaGate.run(async () => {
+      if (!released) { released = true; reservedActiveBytes -= increase }
+    })
+  })
   const mutation = async <T>(principal: Principal, operationId: string, siteId: string | undefined, work: () => Promise<T>) => {
     validateOperation(operationId)
     if (now() >= mutationWindowEnd) { mutationWindowEnd = now() + 60_000; mutationAttempts = 0 }
@@ -499,7 +536,7 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
           sql.prepare('INSERT INTO site_ids VALUES (?,?,?)').run(siteId, principal.ownerId, timestamp)
           sql.prepare("INSERT INTO sites(id,owner_id,name,visibility,visibility_generation,version,active_revision_id,lifecycle,created_at_ms,updated_at_ms,expires_at_ms,size_bytes,file_count) VALUES (?,?,?,'private',1,1,?,'active',?,?,?,?,?)")
             .run(siteId, principal.ownerId, name, revisionId, timestamp, timestamp, row.expires_at_ms, total, sorted.length)
-          sql.prepare('INSERT INTO site_revisions(site_id,id,size_bytes,file_count,created_at_ms) VALUES (?,?,?,?,?)').run(siteId, revisionId, total, sorted.length, timestamp)
+          sql.prepare('INSERT INTO site_revisions(site_id,id,size_bytes,file_count,created_at_ms,published_version,last_activated_version,last_activated_at_ms) VALUES (?,?,?,?,?,1,1,?)').run(siteId, revisionId, total, sorted.length, timestamp, timestamp)
           saveReceipt(principal.ownerId, command.operationId, 'create', siteId, fingerprint, result, timestamp)
         })())
         published = true
@@ -610,11 +647,11 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
         const result: FileMutationResult = { site: view(updated), changedPaths: changedPaths.sort(), deletedPaths: deletedPaths.sort(), operationId: command.operationId, operationExpiresAt: iso(commitTimestamp + receiptLifetimeMs) }
         try {
           await revisionGate.run(async () => sql.transaction(() => {
-            sql.prepare('INSERT INTO site_revisions(site_id,id,size_bytes,file_count,created_at_ms) VALUES (?,?,?,?,?)').run(row.id, revisionId, total, manifest.length, commitTimestamp)
+            sql.prepare('INSERT INTO site_revisions(site_id,id,size_bytes,file_count,created_at_ms,published_version,last_activated_version,last_activated_at_ms) VALUES (?,?,?,?,?,?,?,?)').run(row.id, revisionId, total, manifest.length, commitTimestamp, updated.version, updated.version, commitTimestamp)
             const changed = sql.prepare("UPDATE sites SET active_revision_id=?,version=version+1,updated_at_ms=?,size_bytes=?,file_count=? WHERE id=? AND owner_id=? AND lifecycle='active' AND version=? AND (expires_at_ms IS NULL OR expires_at_ms>?)")
               .run(revisionId, commitTimestamp, total, manifest.length, row.id, principal.ownerId, command.expectedVersion, commitTimestamp)
             if (changed.changes !== 1) ensureMutable(principal.ownerId, row.id, command.expectedVersion, commitTimestamp)
-            sql.prepare('UPDATE site_revisions SET cleanup_after_ms=? WHERE site_id=? AND id=?').run(commitTimestamp, row.id, row.active_revision_id)
+            applyRetention(row.id, commitTimestamp)
             saveReceipt(principal.ownerId, command.operationId, kind, row.id, fingerprint, result, commitTimestamp)
           })())
           published = true
@@ -768,6 +805,92 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     }
   }
 
+  const verifyRevision = async (siteId: string, revisionId: string, metadata: { size_bytes: number; file_count: number }, label = 'Revision') => {
+    const manifest = await loadManifest(siteId, revisionId)
+    if (!manifest.files.some((file) => file.path === 'index.html') || manifest.files.length !== metadata.file_count ||
+        manifest.files.reduce((sum, file) => sum + file.sizeBytes, 0) !== metadata.size_bytes) throw new Error(`${label} metadata is inconsistent for site ${siteId}`)
+    for (const file of manifest.files) {
+      const handle = await open(join(revisionPath(siteId, revisionId), 'files', file.path), constants.O_RDONLY | constants.O_NOFOLLOW)
+      try {
+        const info = await handle.stat()
+        if (!info.isFile() || info.size !== file.sizeBytes) throw new Error(`${label} file is inconsistent for site ${siteId}`)
+        const digest = createHash('sha256'); const buffer = Buffer.allocUnsafe(64 * 1024); let position = 0
+        while (position < info.size) {
+          const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, info.size - position), position)
+          if (bytesRead === 0) throw new Error(`${label} file ended early for site ${siteId}`)
+          digest.update(buffer.subarray(0, bytesRead)); position += bytesRead
+        }
+        if (digest.digest('hex') !== file.digest) throw new Error(`${label} digest is inconsistent for site ${siteId}`)
+      } finally { await handle.close() }
+    }
+    return manifest
+  }
+
+  const restoreRevision: SiteModule['restoreRevision'] = (principal, command) => mutation(principal, command.operationId, command.siteId, async () => {
+    if (!/^[a-f0-9]{32}$/.test(command.revisionId) || !Number.isSafeInteger(command.expectedVersion) || command.expectedVersion < 1) {
+      throw new DomainError('INVALID_INPUT', 'Revision and expected version are invalid')
+    }
+    const fingerprint = stableFingerprint({ kind: 'restore', siteId: command.siteId, expectedVersion: command.expectedVersion, revisionId: command.revisionId })
+    const existing = receipt(principal.ownerId, command.operationId, fingerprint) as SiteMutationResult | undefined
+    if (existing) return existing
+    const releaseReceipt = await admitReceipt()
+    let lease: RevisionLease | undefined
+    let releaseQuota: (() => Promise<void>) | undefined
+    try {
+      const row = ensureMutable(principal.ownerId, command.siteId, command.expectedVersion, now())
+      const changed = row.active_revision_id !== command.revisionId
+      let target: RevisionRow | undefined
+      if (changed) {
+        lease = await acquireRevision(() => {
+          const current = ensureMutable(principal.ownerId, command.siteId, command.expectedVersion, now())
+          target = sql.prepare('SELECT * FROM site_revisions WHERE site_id=? AND id=? AND cleanup_after_ms IS NULL').get(row.id, command.revisionId) as RevisionRow | undefined
+          if (!target) throw new DomainError('REVISION_UNAVAILABLE', 'Revision is no longer retained')
+          return { row: current, revisionId: command.revisionId }
+        }, 'revision')
+        const manifest = await verifyRevision(row.id, command.revisionId, target!)
+        if (manifest.files.length > config.limits.maxFilesPerSite || manifest.files.some((file) => file.sizeBytes > config.limits.maxFileBytes)) {
+          throw new DomainError('QUOTA_EXCEEDED', 'Revision exceeds current file limits')
+        }
+        releaseQuota = await reserveRestoreQuota(target!.size_bytes, row.size_bytes)
+      }
+      await options.fault?.('before-restore-commit')
+      let result: SiteMutationResult
+      try {
+        result = await revisionGate.run(async () => sql.transaction(() => {
+          const timestamp = now()
+          const current = ensureMutable(principal.ownerId, row.id, command.expectedVersion, timestamp)
+          if (changed) {
+            const retained = sql.prepare('SELECT 1 FROM site_revisions WHERE site_id=? AND id=? AND cleanup_after_ms IS NULL').get(row.id, command.revisionId)
+            if (!retained) throw new DomainError('REVISION_UNAVAILABLE', 'Revision is no longer retained')
+            const update = sql.prepare("UPDATE sites SET active_revision_id=?,version=version+1,updated_at_ms=?,size_bytes=?,file_count=? WHERE id=? AND owner_id=? AND lifecycle='active' AND version=? AND (expires_at_ms IS NULL OR expires_at_ms>?)")
+              .run(command.revisionId, timestamp, target!.size_bytes, target!.file_count, row.id, principal.ownerId, command.expectedVersion, timestamp)
+            if (update.changes !== 1) throw new DomainError('VERSION_CONFLICT', 'Site changed during restore')
+            sql.prepare('UPDATE site_revisions SET last_activated_version=?,last_activated_at_ms=? WHERE site_id=? AND id=?')
+              .run(current.version + 1, timestamp, row.id, command.revisionId)
+            forgetManifests(row.id, command.revisionId)
+          }
+          const updated = changed ? { ...current, active_revision_id: command.revisionId, version: current.version + 1,
+            updated_at_ms: timestamp, size_bytes: target!.size_bytes, file_count: target!.file_count } : current
+          const result: SiteMutationResult = { site: view(updated), operationId: command.operationId, operationExpiresAt: iso(timestamp + receiptLifetimeMs) }
+          saveReceipt(principal.ownerId, command.operationId, 'restore', row.id, fingerprint, result, timestamp)
+          return result
+        })())
+      } catch (error) {
+        const committed = receipt(principal.ownerId, command.operationId, fingerprint) as SiteMutationResult | undefined
+        if (committed) return committed
+        throw error
+      }
+      if (changed) audit({ event: 'site_revision_restored', ownerId: principal.ownerId, siteId: row.id, operationId: command.operationId,
+        fromRevisionId: row.active_revision_id, toRevisionId: command.revisionId, version: result.site.version })
+      await options.fault?.('after-commit')
+      return result
+    } finally {
+      if (lease) await lease.release()
+      if (releaseQuota) await releaseQuota()
+      await releaseReceipt()
+    }
+  })
+
   const runCleanup: SiteModule['runCleanup'] = async (at = new Date(now())) => revisionGate.run(async () => {
     const timestamp = at.getTime(); let removedRevisions = 0; let removedSites = 0
     for (const pending of [...pendingCleanups]) await retryCleanup(pending)
@@ -792,24 +915,11 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
   const recover = async () => {
     await rm(stagingRoot, { recursive: true, force: true }); await mkdir(stagingRoot, { recursive: true, mode: 0o700 })
     const rows = sql.prepare("SELECT * FROM sites WHERE lifecycle='active'").all() as SiteRow[]
-    for (const row of rows) {
-      const manifest = await readManifest(row.id, row.active_revision_id)
-      if (manifest.files.length !== row.file_count || manifest.files.reduce((sum, file) => sum + file.sizeBytes, 0) !== row.size_bytes) throw new Error(`Active revision metadata is inconsistent for site ${row.id}`)
-      for (const file of manifest.files) {
-        const handle = await open(join(revisionPath(row.id, row.active_revision_id), 'files', file.path), constants.O_RDONLY | constants.O_NOFOLLOW)
-        try {
-          const info = await handle.stat()
-          if (!info.isFile() || info.size !== file.sizeBytes) throw new Error(`Active revision file is inconsistent for site ${row.id}`)
-          const digest = createHash('sha256'); const buffer = Buffer.allocUnsafe(64 * 1024); let position = 0
-          while (position < info.size) {
-            const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, info.size - position), position)
-            if (bytesRead === 0) throw new Error(`Active revision file ended early for site ${row.id}`)
-            digest.update(buffer.subarray(0, bytesRead)); position += bytesRead
-          }
-          if (digest.digest('hex') !== file.digest) throw new Error(`Active revision digest is inconsistent for site ${row.id}`)
-        } finally { await handle.close() }
-      }
-    }
+    for (const row of rows) await verifyRevision(row.id, row.active_revision_id, row, 'Active revision')
+    sql.transaction(() => {
+      const timestamp = now()
+      for (const row of rows) applyRetention(row.id, timestamp)
+    })()
     const siteDirs = await readdir(sitesRoot, { withFileTypes: true })
     for (const siteDir of siteDirs) {
       if (!siteDir.isDirectory() || !/^[a-f0-9]{32}$/.test(siteDir.name)) continue
@@ -833,12 +943,15 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
         coalesce(sum(visibility='public'),0) publicSites, coalesce(sum(visibility='private'),0) privateSites,
         coalesce(sum(file_count),0) fileCount, coalesce(sum(size_bytes),0) sizeBytes,
         coalesce(sum(expires_at_ms<=?),0) expiringSoon FROM sites WHERE ${live}`)
-        .get(soon, principal.ownerId, timestamp) as Omit<SiteOverview, 'recentSites' | 'expiringSites'>
+        .get(soon, principal.ownerId, timestamp) as Omit<SiteOverview, 'recentSites' | 'expiringSites' | 'historySizeBytes'>
       const recent = sql.prepare(`SELECT * FROM sites WHERE ${live} ORDER BY updated_at_ms DESC,id DESC LIMIT 5`)
         .all(principal.ownerId, timestamp) as SiteRow[]
       const expiring = sql.prepare(`SELECT * FROM sites WHERE ${live} AND expires_at_ms<=? ORDER BY expires_at_ms,id LIMIT 5`)
         .all(principal.ownerId, timestamp, soon) as SiteRow[]
-      return { ...totals, recentSites: recent.map(view), expiringSites: expiring.map(view) }
+      const historySizeBytes = (sql.prepare(`SELECT coalesce(sum(r.size_bytes),0) total FROM site_revisions r JOIN sites s ON s.id=r.site_id
+        WHERE s.owner_id=? AND s.lifecycle='active' AND (s.expires_at_ms IS NULL OR s.expires_at_ms>?)
+          AND r.id<>s.active_revision_id AND r.cleanup_after_ms IS NULL`).get(principal.ownerId, timestamp) as { total: number }).total
+      return { ...totals, historySizeBytes, recentSites: recent.map(view), expiringSites: expiring.map(view) }
     },
     async exportSite(principal, siteId, signal) {
       if (shutdown.signal.aborted) throw new DomainError('BUSY', 'The installation is shutting down')
@@ -872,7 +985,17 @@ export async function createSiteModule(config: AppConfig, database: AppDatabase,
     async getSite(principal, siteId) { return view(siteRow(principal.ownerId, siteId, true)) },
     writeFiles: (principal, command) => changeFiles('write', principal, { ...command, files: command.files }),
     deleteFiles: (principal, command) => changeFiles('delete-files', principal, { ...command, paths: command.paths }),
-    setVisibility, setExpiration, deleteSite,
+    setVisibility, setExpiration, deleteSite, restoreRevision,
+    async listRevisions(principal, { siteId }) {
+      const row = siteRow(principal.ownerId, siteId)
+      const revisions = sql.prepare(`SELECT * FROM site_revisions WHERE site_id=? AND cleanup_after_ms IS NULL
+        ORDER BY (id=?) DESC,last_activated_version DESC,created_at_ms DESC,id DESC`).all(siteId, row.active_revision_id) as RevisionRow[]
+      return { site: view(row), historyLimit: config.limits.revisionHistoryLimit, revisions: revisions.map((revision) => ({
+        revisionId: revision.id, active: revision.id === row.active_revision_id, publishedVersion: revision.published_version,
+        lastActivatedVersion: revision.last_activated_version, createdAt: iso(revision.created_at_ms),
+        lastActivatedAt: iso(revision.last_activated_at_ms), sizeBytes: revision.size_bytes, fileCount: revision.file_count,
+      })) }
+    },
     async listFiles(principal, query) {
       const lease = await acquireRevision(() => {
         const row = siteRow(principal.ownerId, query.siteId)
