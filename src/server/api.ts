@@ -28,7 +28,7 @@ export function createApiHandler(config: AppConfig, auth: ReturnType<typeof crea
     try {
       requireOrigin(request, config.appOrigin, false)
       const principal = authenticatedPrincipal ?? auth.readBearer(request)
-      const match = /^\/api\/sites(?:\/([a-f0-9]{32})(?:\/(file|files|files\/delete|visibility|expiration|export))?)?$/.exec(url.pathname)
+      const match = /^\/api\/sites(?:\/([a-f0-9]{32})(?:\/(file|files|files\/delete|visibility|expiration|export|revisions|restore))?)?$/.exec(url.pathname)
       if (!match) throw new DomainError('NOT_FOUND', 'Not found')
       const [, siteId, resource] = match
       if (siteId && resource === 'export') return await exportResponse(request, sites, principal, siteId)
@@ -45,6 +45,14 @@ export function createApiHandler(config: AppConfig, auth: ReturnType<typeof crea
       if (siteId && !resource && request.method === 'GET') {
         parseSiteInput(schemas.get, { ...query, siteId })
         return json(await sites.getSite(principal, siteId))
+      }
+      if (siteId && resource === 'revisions' && request.method === 'GET') {
+        parseSiteInput(schemas.revisions, { ...query, siteId })
+        return json(await sites.listRevisions(principal, { siteId }))
+      }
+      if (siteId && resource === 'restore' && request.method === 'POST') {
+        return json(await sites.restoreRevision(principal, { siteId,
+          ...parseSiteInput(schemas.restore, await readJson(request, config.limits.maxJsonBodyBytes)) }))
       }
       if (siteId && resource === 'file' && request.method === 'GET') {
         const file = await sites.openOwnedFile(principal, parseSiteInput(schemas.read, { ...query, siteId }))
@@ -76,7 +84,7 @@ export function createApiHandler(config: AppConfig, auth: ReturnType<typeof crea
       if (siteId && !resource && request.method === 'DELETE') {
         return json(await sites.deleteSite(principal, { ...parseSiteInput(schemas.delete, await readJson(request, config.limits.maxJsonBodyBytes)), siteId }))
       }
-      const allow = !siteId ? 'GET, POST' : !resource ? 'GET, DELETE' : resource === 'files' ? 'GET, PUT' : resource === 'files/delete' ? 'POST' : resource === 'visibility' || resource === 'expiration' ? 'PUT' : 'GET'
+      const allow = !siteId ? 'GET, POST' : !resource ? 'GET, DELETE' : resource === 'files' ? 'GET, PUT' : resource === 'files/delete' || resource === 'restore' ? 'POST' : resource === 'visibility' || resource === 'expiration' ? 'PUT' : 'GET'
       return new Response(null, { status: 405, headers: { ...responseHeaders, allow } })
     } catch (error) { return errorResponse(error) }
   }

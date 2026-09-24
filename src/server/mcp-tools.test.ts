@@ -36,7 +36,8 @@ describe('site tools through the official MCP HTTP transport', () => {
     const { config, headers, api, rpc, call } = await fixture()
     const discovery = await rpc('tools/list')
     expect(discovery.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual([
-      'create_site', 'delete_files', 'delete_site', 'get_site', 'list_files', 'list_sites', 'read_file', 'set_site_expiration', 'set_site_visibility', 'write_files',
+      'create_site', 'delete_files', 'delete_site', 'get_site', 'list_files', 'list_site_revisions', 'list_sites', 'read_file',
+      'restore_site_revision', 'set_site_expiration', 'set_site_visibility', 'write_files',
     ])
     expect(discovery.result.tools.find((tool: { name: string }) => tool.name === 'set_site_expiration').annotations)
       .toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true })
@@ -49,6 +50,33 @@ describe('site tools through the official MCP HTTP transport', () => {
     expect((await call('list_sites', {})).structuredContent.sites).toHaveLength(1)
     expect((await call('read_file', { siteId: created.site.id, path: 'index.html' })).structuredContent)
       .toMatchObject({ path: 'index.html', content: 'private text', sizeBytes: 12 })
+  })
+
+  it('lists and restores history across MCP and REST using the same receipt', async () => {
+    const { call, rpc, api, config, headers } = await fixture()
+    const created = (await call('create_site', { operationId: crypto.randomUUID(), name: 'Restore across transports',
+      files: [{ path: 'index.html', content: 'first' }] })).structuredContent
+    const changed = await call('write_files', { siteId: created.site.id, operationId: crypto.randomUUID(), expectedVersion: 1,
+      files: [{ path: 'index.html', content: 'second' }] })
+    expect(changed.structuredContent.site.version).toBe(2)
+    const history = await call('list_site_revisions', { siteId: created.site.id })
+    expect(history.structuredContent.revisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ revisionId: created.site.revisionId, active: false }),
+      expect.objectContaining({ revisionId: changed.structuredContent.site.revisionId, active: true }),
+    ]))
+    const tools = (await rpc('tools/list')).result.tools
+    expect(tools.find((tool: { name: string }) => tool.name === 'restore_site_revision').annotations)
+      .toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true })
+    const command = { operationId: crypto.randomUUID(), expectedVersion: 2, revisionId: created.site.revisionId }
+    const restored = await call('restore_site_revision', { siteId: created.site.id, ...command })
+    expect(restored.structuredContent.site.version).toBe(3)
+    const replay = await api(new Request(`${config.appOrigin}/api/sites/${created.site.id}/restore`, {
+      method: 'POST', headers, body: JSON.stringify(command),
+    }))
+    expect(replay!.status).toBe(200)
+    expect(await replay!.json()).toEqual(restored.structuredContent)
+    expect((await call('restore_site_revision', { siteId: created.site.id, ...command, revisionId: changed.structuredContent.site.revisionId }))
+      .isError).toBe(true)
   })
 
   it('deletes through MCP and replays the same command through REST after cleanup', async () => {

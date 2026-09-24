@@ -20,6 +20,18 @@ _Avoid_: Version when referring to an application release
 The revision currently selected for visitors to a site.
 _Avoid_: Latest revision, because a prepared revision may not be published
 
+**Retained revision**:
+A previously active revision kept available for the owner to inspect and restore.
+_Avoid_: Backup, which covers the entire installation
+
+**Revision history**:
+The bounded collection of a site's active and retained revisions.
+_Avoid_: Audit log, because repeated activations are not separate history entries
+
+**Revision restore**:
+Making a retained revision active again at the site's existing URL while advancing the site's version.
+_Avoid_: Backup restore when referring to changing a site's active content
+
 **Publication**:
 The operation that makes a complete revision active at the site's existing visitor URL.
 _Avoid_: Deployment when referring to publication of site content

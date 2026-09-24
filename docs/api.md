@@ -23,10 +23,12 @@ The API is currently unversioned under `/api`. Clients should use the documented
 | `POST` | `/api/sites` | Create body | `201` create receipt |
 | `GET` | `/api/sites?limit=&cursor=` | `limit` 1–50; opaque cursor | Site page |
 | `GET` | `/api/sites/:siteId` | None | Site metadata |
+| `GET` | `/api/sites/:siteId/revisions` | None | Retained revision history |
 | `GET` | `/api/sites/:siteId/files?revisionId=&limit=&cursor=` | `limit` 1–100; optional pinned revision | File page |
 | `GET` | `/api/sites/:siteId/file?path=&revisionId=` | Required path; optional pinned revision | Raw file bytes |
 | `PUT` | `/api/sites/:siteId/files` | JSON write body or multipart body | File-mutation receipt |
 | `POST` | `/api/sites/:siteId/files/delete` | Delete-files body | File-mutation receipt |
+| `POST` | `/api/sites/:siteId/restore` | Restore body | Site-mutation receipt |
 | `PUT` | `/api/sites/:siteId/visibility` | Visibility body | Site-mutation receipt |
 | `PUT` | `/api/sites/:siteId/expiration` | Expiration body | Site-mutation receipt |
 | `GET` | `/api/sites/:siteId/export` | None | ZIP of the current revision |
@@ -58,6 +60,30 @@ A site has this shape:
 Every successful mutation includes the caller's `operationId` and `operationExpiresAt`, the deadline for exact replay. Create and site-mutation receipts contain `site`. File-mutation receipts also contain sorted `changedPaths` and `deletedPaths`. A delete receipt contains `siteId`, the final `version`, `deleted: true` and `cleanupPending`.
 
 Creation starts at version 1. A mutation that changes state advances the site version by one. A no-op returns a receipt without advancing it. `GET /api/sites/:siteId` returns the version at the root as `version`; mutation receipts return it as `site.version`. Updating files preserves the site ID, URL, visibility and expiration.
+
+## Revision history and restoration
+
+`GET /api/sites/:siteId/revisions` returns the active revision first, then retained previous revisions ordered by descending `lastActivatedVersion`:
+
+```json
+{
+  "site": { "id": "0123456789abcdef0123456789abcdef", "version": 3, "revisionId": "fedcba9876543210fedcba9876543210" },
+  "historyLimit": 5,
+  "revisions": [
+    { "revisionId": "fedcba9876543210fedcba9876543210", "active": true, "publishedVersion": 1, "lastActivatedVersion": 3, "createdAt": "2026-09-17T10:00:00.000Z", "lastActivatedAt": "2026-09-19T10:00:00.000Z", "sizeBytes": 41, "fileCount": 1 }
+  ]
+}
+```
+
+The `site` object has the complete site shape shown above; it is shortened here. `historyLimit` counts previous revisions beyond the active revision. The operator can set it from 0 through 50; the default is 5. `publishedVersion` records the revision's first publication and `lastActivatedVersion` its latest activation. Either version field may be `null` for a revision migrated from older storage. `createdAt` and `lastActivatedAt` are timestamps. History is owner-only even for a public site.
+
+Restore one of the listed revisions with `POST /api/sites/:siteId/restore`:
+
+```json
+{"operationId":"88888888-8888-4888-8888-888888888888","expectedVersion":3,"revisionId":"fedcba9876543210fedcba9876543210"}
+```
+
+The result is a site-mutation receipt. Restoring a previous revision reactivates its immutable files and increments the site version by one; it keeps the site ID, URL, visibility and expiration. Restoring the active revision checks `expectedVersion` and returns a no-op receipt without incrementing it. Only retained revisions are restorable; a retired revision returns `REVISION_UNAVAILABLE`. Before activation the server verifies the revision's file metadata and digests against disk. The same operations are available as MCP `list_site_revisions` and `restore_site_revision`.
 
 ## Create a private site
 
@@ -102,7 +128,7 @@ The response is a create receipt:
 
 ## Read metadata and files
 
-List responses use `{ "sites": [...], "cursor": null }` and `{ "revisionId": "...", "files": [...], "cursor": null }`. Each file entry contains `path`, `sizeBytes`, server-assigned `contentType` and a SHA-256 `digest`.
+List responses use `{ "sites": [...], "cursor": null }` and `{ "revisionId": "...", "files": [...], "cursor": null }`. Each file entry contains `path`, `sizeBytes`, server-assigned `contentType` and a SHA-256 `digest`. A pinned revision read works while that revision remains retained or leased and its files remain on disk; a cursor does not keep it available indefinitely.
 
 ```sh
 curl --fail-with-body \

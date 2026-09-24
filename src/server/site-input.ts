@@ -9,13 +9,16 @@ export function siteInputSchemas(config: AppConfig) {
   const path = z.string().min(1).max(512)
   const files = z.array(z.strictObject({ path, content: z.string() })).min(1).max(config.limits.maxBatchFiles)
   const cursor = z.string().min(1).max(2048).optional()
-  const revisionId = z.string().regex(/^[a-f0-9]{32}$/).optional()
+  const revisionIdValue = z.string().regex(/^[a-f0-9]{32}$/)
+  const revisionId = revisionIdValue.optional()
   const expiresInSeconds = z.number().int().min(60).max(2592000).nullable()
   return {
     create: z.strictObject({ operationId, name: z.string().trim().min(1).max(100), files,
       expiresInSeconds: expiresInSeconds.optional() }),
     list: z.strictObject({ cursor, limit: z.number().int().min(1).max(50).optional() }),
     get: z.strictObject({ siteId }),
+    revisions: z.strictObject({ siteId }),
+    restore: z.strictObject({ operationId, expectedVersion, revisionId: revisionIdValue }),
     read: z.strictObject({ siteId, path, revisionId }),
     listFiles: z.strictObject({ siteId, revisionId, cursor, limit: z.number().int().min(1).max(100).optional() }),
     write: z.strictObject({ operationId, expectedVersion, files }),

@@ -33,20 +33,22 @@ export function createSitesWebHandler(config: AppConfig, auth: Auth, sites: Site
   const fileDeletion = schemas.deleteFiles.extend({ csrfToken: z.string().max(128) })
   const visibility = schemas.visibility.extend({ csrfToken: z.string().max(128) })
   const expiration = schemas.expiration.extend({ csrfToken: z.string().max(128) })
-  const fileRead = schemas.read.omit({ revisionId: true }).extend({ mode: z.enum(['download', 'preview']).optional() })
+  const restore = schemas.restore.extend({ csrfToken: z.string().max(128) })
+  const fileRead = schemas.read.extend({ mode: z.enum(['download', 'preview']).optional() })
+    .refine((input) => !input.revisionId || input.mode !== undefined)
   const fileWrite = schemas.delete.extend({ csrfToken: z.string().max(128), path: z.string().min(1).max(512), content: z.string() })
   const settings = z.strictObject({ csrfToken: z.string().max(128),
     defaultExpiresInSeconds: z.number().int().refine((value) => allowedDefaultExpiresInSeconds.has(value)).nullable() })
   return async (request: Request): Promise<Response | null> => {
     const url = new URL(request.url)
-    const web = /^\/web\/sites(?:\/([a-f0-9]{32})(?:\/(file|files|files\/delete|visibility|expiration|export))?)?$/.exec(url.pathname)
+    const web = /^\/web\/sites(?:\/([a-f0-9]{32})(?:\/(file|files|files\/delete|visibility|expiration|export|revisions|restore))?)?$/.exec(url.pathname)
     const overview = url.pathname === '/web/overview'
     const ownerSettings = url.pathname === '/web/settings'
     const opening = /^\/sites\/([a-f0-9]{32})\/open$/.exec(url.pathname)
     if (!web && !opening && !ownerSettings && !overview) return null
     try {
       const sessionToken = readCookie(request, cookieNames(config).session)
-      if (overview || web?.[2] === 'file') {
+      if (overview || web?.[2] === 'file' || web?.[2] === 'revisions' || web?.[2] === 'restore') {
         requireOrigin(request, config.appOrigin, request.method !== 'GET')
         const fetchSite = request.headers.get('sec-fetch-site')
         if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') throw new DomainError('UNAUTHENTICATED', 'Request origin is not permitted')
@@ -87,7 +89,8 @@ export function createSitesWebHandler(config: AppConfig, auth: Auth, sites: Site
       const creating = Boolean(web && !web[1] && request.method === 'POST')
       const writing = web?.[2] === 'files' && request.method === 'PUT'
       const deletingFiles = web?.[2] === 'files/delete'
-      if (creating || writing || deletingFiles) {
+      const restoring = web?.[2] === 'restore'
+      if (creating || writing || deletingFiles || restoring) {
         if (request.headers.has('authorization')) throw new DomainError('UNAUTHENTICATED', 'An owner session is required')
         const fetchSite = request.headers.get('sec-fetch-site')
         if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') throw new DomainError('UNAUTHENTICATED', 'Request origin is not permitted')
@@ -117,6 +120,13 @@ export function createSitesWebHandler(config: AppConfig, auth: Auth, sites: Site
         return json(await sites.deleteFiles(session, { siteId: web![1], operationId: input.operationId,
           expectedVersion: input.expectedVersion, paths: input.paths }))
       }
+      if (restoring) {
+        if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'POST' } })
+        const input = parseInput(restore, await readJson(request, config.limits.maxJsonBodyBytes))
+        auth.verifySessionCsrf(sessionToken, input.csrfToken)
+        return json(await sites.restoreRevision(session, { siteId: web![1], revisionId: input.revisionId,
+          operationId: input.operationId, expectedVersion: input.expectedVersion }))
+      }
       if (overview) {
         if (url.search) throw new DomainError('INVALID_INPUT', 'Overview accepts no query parameters')
         if (request.method !== 'GET') return new Response(null, { status: 405, headers: { allow: 'GET' } })
@@ -135,6 +145,10 @@ export function createSitesWebHandler(config: AppConfig, auth: Auth, sites: Site
         return new Response(null, { status: 405, headers: { allow: 'GET, POST' } })
       }
       const [, siteId, action] = web!
+      if (action === 'revisions') {
+        if (request.method !== 'GET') return new Response(null, { status: 405, headers: { allow: 'GET' } })
+        return json(await sites.listRevisions(session, parseInput(schemas.revisions, { ...Object.fromEntries(url.searchParams), siteId })))
+      }
       if (action === 'file') {
         if (request.method === 'GET') return await readWebFile(sites, session, config,
           parseInput(fileRead, { ...Object.fromEntries(url.searchParams), siteId }))

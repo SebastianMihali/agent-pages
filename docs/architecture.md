@@ -1,6 +1,6 @@
 # Architecture
 
-Agent Pages is a single-owner static hosting application. One Node.js process owns SQLite metadata and immutable site revisions on one local persistent volume. REST, MCP and the dashboard use the same site module for publication, visibility, expiration and deletion.
+Agent Pages is a single-owner static hosting application. One Node.js process owns SQLite metadata and immutable site revisions on one local persistent volume. REST, MCP and the dashboard use the same site module for publication, bounded history, restoration, visibility, expiration and deletion.
 
 The [glossary](../CONTEXT.md) defines the domain terms. The public integration contract is documented in the [REST API reference](api.md) and [agent skill](../skills/agent-pages/SKILL.md). Runtime settings and limits are listed in [`.env.example`](../.env.example) and validated by [`config.ts`](../src/server/config.ts).
 
@@ -53,16 +53,18 @@ One site retains its identity and URL across changes. A complete immutable revis
 1. Authenticate, authorize, validate the operation and reserve bounded capacity. A replay must match the original operation fingerprint, including file bytes.
 2. Prepare a complete revision outside the served tree, copying unchanged files and applying the batch. Validate the prospective tree, file rules and quotas.
 3. Flush and finalize the files and manifest on the same filesystem.
-4. Recheck lifecycle and expected version, then commit the active reference and receipt in one database transaction.
-5. Release reservations and reclaim retired revisions when no reader holds them.
+4. Recheck lifecycle and expected version, then commit the active reference, retention decisions and receipt in one database transaction.
+5. Release reservations and reclaim retired revisions when no reader or restore holds them.
 
 Preparation failures leave the old active reference untouched. A finalized revision without a committed reference is an orphan recovered during cleanup. A response lost after commit is resolved using the stored operation receipt.
 
-Each content request leases one revision until its stream ends. Several requests in one browser navigation can straddle a publication; navigation-wide snapshots and public revision history are unsupported.
+The operator sets `REVISION_HISTORY_LIMIT` from 0 through 50, default 5. It counts previous revisions in addition to the active one, with no age cutoff; 0 recovers the earlier active-only behavior. A retained revision is immutable and can become active again without copying its files. Restoration checks the current site version and advances it once when the active revision changes. Restoring the already active revision returns a no-op receipt after the version check. Restoration keeps the site identity, URL, visibility, expiration and visibility generation. Retired revisions cannot be restored.
+
+Each content request leases one revision until its stream ends. Owner file reads may pin a retained revision while its files remain on disk, but a cursor is not an indefinite retention lease. Several requests in one browser navigation can straddle a publication; navigation-wide snapshots and public revision history are unsupported. Listing and restoring revisions require owner authorization even when the site is public.
 
 All mutations use caller-generated UUID operation IDs. Updates also require the current `expectedVersion`. Matching retries return the original successful result before checking the now-stale version; changed input under the same ID fails. Receipts persist for at least 24 hours, with `operationExpiresAt` in the result. A historical receipt is not evidence of current site state.
 
-Deletion first commits an inaccessible tombstone and receipt, then reclaims files with retry. Expiration denies content immediately by time comparison, even before cleanup. An expired site cannot be revived. Startup discards abandoned staging, reconciles revisions, resumes deletion and validates active metadata before readiness succeeds. Missing or corrupt active content fails readiness rather than publishing an empty site.
+Deletion first commits an inaccessible tombstone and receipt, then reclaims files with retry. Expiration denies content immediately by time comparison, even before cleanup. An expired site cannot be revived. Startup discards abandoned staging, reconciles revisions, resumes deletion and validates active metadata before readiness succeeds. Reducing the history limit retires excess history during startup before readiness; increasing it never resurrects retired revisions. Missing or corrupt active content fails readiness rather than publishing an empty site. Historical metadata and file digests are verified before a revision can be restored, bypassing cached validation. Restoration holds a lease so expiry cleanup cannot remove its files during activation.
 
 An installation lock prevents another process from opening the same data directory. Multiple replicas and network filesystems are unsupported. Backups are cold copies of the entire data directory; see [operations](operations.md#cold-backup).
 
@@ -70,7 +72,7 @@ An installation lock prevents another process from opening the same data directo
 
 Writing files in place exposes partial batches. Renaming individual files protects each file but cannot publish a related batch atomically. The filesystem and SQLite do not share a transaction, so preparation and recovery must account for files finalized before the database commit.
 
-A complete revision and one active-reference transition provide a narrow publication boundary without adding a general history or deployment platform. Preparing a revision may copy the bounded site tree; measure representative workloads before introducing deduplication or copy-on-write. Retain revisions only while active, leased by readers or awaiting cleanup.
+A complete revision and one active-reference transition provide a narrow publication boundary. Preparing a revision may copy the bounded site tree; restoration instead reactivates a retained immutable revision without a content copy. Retain revisions while active, within the configured previous-revision limit, leased by readers or awaiting cleanup. Operation receipts do not pin revisions.
 
 ## Files and browser publication
 
@@ -90,4 +92,4 @@ Staging across requests or chunking would add partial server state and recovery 
 
 ## Supported scope
 
-The dashboard includes site and API-key management, expiration defaults, file previews/downloads, bounded text editing, browser publication and ZIP export. Public registration, teams, private sharing, ZIP import, rollback, hosted server execution, S3 storage and per-site containers are outside the current scope.
+The dashboard includes site and API-key management, expiration defaults, file previews/downloads, bounded text editing, browser publication, bounded revision restoration and ZIP export. Public registration, teams, private sharing, ZIP import, hosted server execution, S3 storage and per-site containers are outside the current scope.

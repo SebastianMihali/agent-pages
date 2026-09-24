@@ -17,7 +17,21 @@ describe('installation configuration', () => {
     })
     expect(config.appOrigin).toBe('https://app.example.com')
     expect(config.limits.maxSiteBytes).toBe(50 * 1024 * 1024)
+    expect(config.limits.revisionHistoryLimit).toBe(5)
     expect(config.secureCookies).toBe(true)
+  })
+  it.each(['0', '50'])('accepts revision history limit %s', (limit) => {
+    const config = parseConfig({ ...credentials,
+      APP_ORIGIN: 'https://app.example.com', CONTENT_BASE_DOMAIN: 'sites.example.com',
+      REVISION_HISTORY_LIMIT: limit,
+    })
+    expect(config.limits.revisionHistoryLimit).toBe(Number(limit))
+  })
+  it.each(['-1', '51', '1.5', 'abc'])('rejects revision history limit %s', (limit) => {
+    expect(() => parseConfig({ ...credentials,
+      APP_ORIGIN: 'https://app.example.com', CONTENT_BASE_DOMAIN: 'sites.example.com',
+      REVISION_HISTORY_LIMIT: limit,
+    })).toThrow('REVISION_HISTORY_LIMIT')
   })
   it.each([
     { APP_ORIGIN: 'http://app.example.com' },

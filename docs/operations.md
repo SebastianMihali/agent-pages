@@ -63,6 +63,8 @@ PORT=3000
 
 `.env.example` lists all resource-limit settings and their defaults. Limit values whose names end in `_MB` use binary MiB. Keep `MAX_FILE_SIZE_MB <= MAX_SITE_SIZE_MB <= MAX_TOTAL_SITE_SIZE_MB <= MAX_STORED_SIZE_MB`, and keep `MAX_BATCH_FILES <= MAX_FILES_PER_SITE`. Leave at least `MIN_FREE_DISK_MB` available beyond admitted staging work.
 
+`REVISION_HISTORY_LIMIT` is an integer from 0 through 50, default 5. It retains that many previous revisions per site in addition to the active revision, without an age cutoff. Set 0 for active-only storage behavior. Lowering the limit requires a restart: startup retires excess history before readiness, and cleanup reclaims its files when leases permit. Wait for cleanup or increase storage capacity if the installation is saturated. Raising the limit does not recover revisions already retired. Size capacity for the sum of individually sized retained revisions, rather than multiplying today's smaller active site size by the revision count; allow additional disk room for staging, copies, SQLite and filesystem overhead.
+
 Changing the configured username or password hash requires a restart. Startup preserves the stable owner and API keys while revoking browser sessions, private-site tickets, and grants.
 
 ## Container build and launch
@@ -165,7 +167,8 @@ Start one container with the restored volume, the same configured origins, and t
 4. The owner can open the private site through the application handoff.
 5. The active files and visibility match the source installation.
 6. An update with the restored current version publishes a new revision at the same site URL.
-7. A retained API key can authenticate unless it was revoked before backup.
+7. Retained revision history is available to the owner; restoring one changes content at the same URL and preserves visibility and expiration.
+8. A retained API key can authenticate unless it was revoked before backup.
 
 Keep the source installation stopped or isolated while testing the restored copy. Two installations must not serve the same site hostnames simultaneously.
 
@@ -173,10 +176,10 @@ Keep a protected backup copy off the application server. Configure a backup sche
 
 ## Recovery and capacity
 
-Expiration denies reads by time comparison before physical cleanup. Explicit deletion and expiration first commit an inaccessible tombstone, then reclaim files asynchronously with retry. Failed cleanup can therefore continue to consume site-count and stored-byte quota.
+Expiration denies reads by time comparison before physical cleanup. Explicit deletion and expiration first commit an inaccessible tombstone, then reclaim files asynchronously with retry. Failed cleanup can therefore continue to consume site-count and stored-byte quota. The stored-byte quota counts retained history and physically pending cleanup, while active-site quota counts active content. The owner overview exposes `historySizeBytes` for retained live historical content; it excludes active content. Staging reservations also count toward admission. Quota bytes represent site payloads, not all disk overhead.
 
-At startup, Agent Pages removes abandoned staging, reconciles retired and orphaned revisions, resumes tombstones, and verifies active revision metadata. A missing or corrupt active revision fails readiness instead of publishing an empty site. Preserve the volume for diagnosis and restore a known-good cold backup; do not manually point metadata at another revision.
+At startup, Agent Pages removes abandoned staging, reconciles retired and orphaned revisions, resumes tombstones, and verifies active revision metadata. A missing or corrupt active revision fails readiness instead of publishing an empty site. Historical revisions are fully verified before restoration. Preserve the volume for diagnosis and restore a known-good cold backup; do not manually point metadata at another revision.
 
 Expected outcomes such as conflicts, denials and limits are not logged. Storage failures and unexpected errors are written to stderr as one JSON line per event (`request_failed`, `tool_failed`, `content_request_failed`, `cleanup_failed`) with the error code, the request ID returned to the client where one exists, and the underlying cause's name, message and system error code. Clients never receive the cause. Use the request ID to correlate a client-reported failure with its log line.
 
-Monitor filesystem free space as well as application quota errors. SQLite, logs, manifests, and filesystem allocation overhead consume space beyond accounted site bytes. `QUOTA_EXCEEDED` requires freeing capacity or changing coherent limits; `STORAGE_UNAVAILABLE` and `BUSY` should be retried with the same operation ID after the underlying condition clears.
+Monitor filesystem free space as well as application quota errors. SQLite, logs, manifests, and filesystem allocation overhead consume space beyond accounted site bytes. New publications are rejected when stored quota or disk space is full; the server does not retire retained history early to make room. Restoration uses existing stored files, reserves only any increase in active-site usage and may therefore succeed when stored quota is full. A restoration that does not increase active usage may succeed after an operator lowers the active-total limit, subject to current per-file, file-count and per-site limits. `QUOTA_EXCEEDED` requires freeing capacity or changing coherent limits; `STORAGE_UNAVAILABLE` and `BUSY` should be retried with the same operation ID after the underlying condition clears.

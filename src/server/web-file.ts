@@ -11,8 +11,10 @@ export function editorByteLimit(config: AppConfig) {
 }
 
 export async function readWebFile(sites: SiteModule, principal: Principal, config: AppConfig,
-  query: { siteId: string; path: string; mode?: 'download' | 'preview' }) {
-  const { site, file: opened } = await sites.openCurrentFile(principal, query)
+  query: { siteId: string; path: string; revisionId?: string; mode?: 'download' | 'preview' }) {
+  if (query.revisionId && !query.mode) throw new DomainError('INVALID_INPUT', 'Revision reads require download or preview mode')
+  const current = query.mode ? null : await sites.openCurrentFile(principal, query)
+  const opened = current?.file ?? await sites.openOwnedFile(principal, query)
   const headers = {
     'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': 'same-origin',
     'content-security-policy': "default-src 'none'; sandbox; frame-ancestors 'none'",
@@ -43,5 +45,5 @@ export async function readWebFile(sites: SiteModule, principal: Principal, confi
     try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }
     catch { unavailableReason = 'This file is not valid UTF-8. Download it to preserve its original encoding.' }
   }
-  return json({ site, file, content, unavailableReason, maxEditableBytes: limit } satisfies SiteFileView)
+  return json({ site: current!.site, file, content, unavailableReason, maxEditableBytes: limit } satisfies SiteFileView)
 }

@@ -28,6 +28,7 @@ import { FileWorkspace } from './file-workspace'
 import { PublicationDialog, PublicationPicker } from './publication-dialog'
 import type { PickedFile } from './publication-dialog'
 import { FileDeletionDialog } from './file-deletion-dialog'
+import { RevisionHistory } from './revision-history'
 
 export function SitesSection({ csrfToken, selectedSiteId, returnPath, onSelectSite, onUnauthorized, onDirtyChange, editorOpen, initialFile, onOpenEditor, onManageKeys }: {
   editorOpen: boolean
@@ -519,6 +520,7 @@ function SiteDetail({ siteId, settings, csrfToken, returnPath, onChanged, onDele
         {publicationDialogs}
 
       </div>
+      {!expired && <RevisionHistory site={site} dirty={editorDirty} onRestored={async () => { await Promise.all([loadDetail(), onChanged()]) }} onUnauthorized={onUnauthorized} />}
       <div className="border-t border-slate-100 p-5 sm:p-6">
         <h3 className="text-sm font-semibold text-slate-900">Delete site</h3>
         <p className="mt-1 text-xs leading-5 text-slate-500">Permanently remove this site and all its files.</p>

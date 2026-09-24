@@ -82,7 +82,7 @@ export function OverviewSection({ onSelectSite, onUnauthorized }: {
         <OverviewSkeleton />
       ) : overview ? (
         <div aria-busy={loading}>
-          <div className="grid grid-flow-dense grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+          <div className="grid grid-flow-dense grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-5">
             <StatCard icon={<Globe2 aria-hidden="true" className="size-5" />} label="Active sites" value={overview.activeSites}>
               <div className="flex flex-wrap gap-1.5">
                 <Badge tone="public">{overview.publicSites} public</Badge>
@@ -94,6 +94,9 @@ export function OverviewSection({ onSelectSite, onUnauthorized }: {
             </StatCard>
             <StatCard icon={<HardDrive aria-hidden="true" className="size-5" />} label="Content size" value={formatBytes(overview.sizeBytes)}>
               Stored in active revisions
+            </StatCard>
+            <StatCard icon={<HardDrive aria-hidden="true" className="size-5" />} label="Retained history" value={formatBytes(overview.historySizeBytes)}>
+              Older retained revisions
             </StatCard>
             <StatCard icon={<Clock3 aria-hidden="true" className="size-5" />} label="Expiring soon" value={overview.expiringSoon}>
               Within the next 72 hours
@@ -206,8 +209,8 @@ function OverviewSkeleton() {
   return (
     <div aria-label="Loading overview" aria-live="polite">
       <span className="sr-only">Loading overview…</span>
-      <div className="grid grid-flow-dense grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        {[0, 1, 2, 3].map((item) => (
+      <div className="grid grid-flow-dense grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((item) => (
           <div className="h-40 animate-pulse rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5" key={item}>
             <div className="h-4 w-24 rounded bg-slate-100" />
             <div className="mt-6 h-9 w-20 rounded bg-slate-100" />

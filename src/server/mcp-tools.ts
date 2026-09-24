@@ -52,6 +52,10 @@ export function registerSiteTools(server: McpServer, principal: Principal, sites
   server.registerTool('get_site', {
     description: 'Read an owned site’s metadata.', inputSchema: schemas.get, annotations: readAnnotations,
   }, (input) => result(() => sites.getSite(principal, input.siteId), 'Site metadata read.'))
+  server.registerTool('list_site_revisions', {
+    description: 'List retained revisions of an owned site, including the active revision and restore metadata.',
+    inputSchema: schemas.revisions, annotations: readAnnotations,
+  }, (input) => result(() => sites.listRevisions(principal, input), 'Site revisions listed.'))
   server.registerTool('list_files', {
     description: 'List up to 100 file entries, with the selected revision ID. Send that revisionId on subsequent pages and reads.',
     inputSchema: schemas.listFiles, annotations: readAnnotations,
@@ -78,6 +82,10 @@ export function registerSiteTools(server: McpServer, principal: Principal, sites
     description: 'Atomically delete named site files; root index.html must remain. Requires expectedVersion and an operationId UUID.',
     inputSchema: schemas.deleteFiles.extend({ siteId }), annotations: writeAnnotations,
   }, (input) => result(() => sites.deleteFiles(principal, input), 'Site files deleted.'))
+  server.registerTool('restore_site_revision', {
+    description: 'Restore a retained revision as the active site content. Requires current expectedVersion and an operationId UUID.',
+    inputSchema: schemas.restore.extend({ siteId }), annotations: writeAnnotations,
+  }, (input) => result(() => sites.restoreRevision(principal, input), 'Site revision restored.'))
   server.registerTool('set_site_visibility', {
     description: 'Explicitly make a site public, allowing anyone to read it, or private, revoking subsequent anonymous access. Does not recall downloaded copies.',
     inputSchema: schemas.visibility.extend({ siteId }), annotations: writeAnnotations,

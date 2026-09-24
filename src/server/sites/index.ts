@@ -40,9 +40,27 @@ export type SiteOverview = Readonly<{
   privateSites: number
   fileCount: number
   sizeBytes: number
+  historySizeBytes: number
   expiringSoon: number
   recentSites: readonly SiteView[]
   expiringSites: readonly SiteView[]
+}>
+
+export type RevisionView = Readonly<{
+  revisionId: string
+  active: boolean
+  publishedVersion: number | null
+  lastActivatedVersion: number | null
+  createdAt: string
+  lastActivatedAt: string
+  sizeBytes: number
+  fileCount: number
+}>
+
+export type RevisionHistory = Readonly<{
+  site: SiteView
+  historyLimit: number
+  revisions: readonly RevisionView[]
 }>
 
 export type SiteFileView = Readonly<{
@@ -98,6 +116,10 @@ export interface RevisionLease {
 }
 
 export interface SiteModule {
+  listRevisions(principal: Principal, query: Readonly<{ siteId: string }>): Promise<RevisionHistory>
+  restoreRevision(principal: Principal, command: Readonly<{
+    operationId: string; siteId: string; expectedVersion: number; revisionId: string
+  }>): Promise<SiteMutationResult>
   getOverview(principal: Principal): Promise<SiteOverview>
   editFile(principal: Principal, command: Readonly<{
     operationId: string; siteId: string; expectedVersion: number; path: string; content: string
@@ -175,7 +197,7 @@ export interface SiteModule {
   close(): Promise<void>
 }
 
-export type SiteModuleFaultPoint = 'before-revision-file-copy' | 'after-stage' | 'after-finalize' | 'after-commit' | 'after-list-lease'
+export type SiteModuleFaultPoint = 'before-revision-file-copy' | 'after-stage' | 'after-finalize' | 'after-commit' | 'after-list-lease' | 'before-restore-commit'
 export type SiteModuleOptions = Readonly<{
   now?: () => Date
   fault?: (point: SiteModuleFaultPoint) => void | Promise<void>

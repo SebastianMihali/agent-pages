@@ -439,7 +439,7 @@ describe('complete site revisions', () => {
   })
 
   it('holds a retired revision while a reader lease is active', async () => {
-    const { dataDir, sql, sites, owner } = await fixture()
+    const { dataDir, sql, sites, owner } = await fixture({ REVISION_HISTORY_LIMIT: '0' })
     const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Lease', files: [{ path: 'index.html', content: 'old' }] })
     const lease = await sites.acquireActiveRevision(created.site.id)
     await sites.writeFiles(owner, { operationId: crypto.randomUUID(), siteId: created.site.id, expectedVersion: 1, files: [{ path: 'index.html', content: 'new' }] })
@@ -452,11 +452,11 @@ describe('complete site revisions', () => {
   })
 
   it('holds a retired revision while its file listing is in progress', async () => {
-    const { dataDir, sql, sites, owner } = await fixture()
+    const { dataDir, sql, sites, owner } = await fixture({ REVISION_HISTORY_LIMIT: '0' })
     const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Listing lease', files: [{ path: 'index.html', content: 'old' }] })
     await sites.close(); sql.close()
     const config = parseConfig({ NODE_ENV: 'test', APP_ORIGIN: 'https://app.example.com', CONTENT_BASE_DOMAIN: 'sites.example.com', DATA_DIR: dataDir,
-      ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'aa'.repeat(16)}$${'bb'.repeat(32)}`, MIN_FREE_DISK_MB: '1' })
+      ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'aa'.repeat(16)}$${'bb'.repeat(32)}`, MIN_FREE_DISK_MB: '1', REVISION_HISTORY_LIMIT: '0' })
     const reopened = new Database(join(dataDir, 'database.sqlite'))
     let listingStarted!: () => void; let finishListing!: () => void; let delayListing = true
     const started = new Promise<void>((resolve) => { listingStarted = resolve })
@@ -477,7 +477,7 @@ describe('complete site revisions', () => {
   })
 
   it('serves a retained revision manifest from memory and forgets it once reclaimed', async () => {
-    const { dataDir, sql, sites, owner } = await fixture()
+    const { dataDir, sql, sites, owner } = await fixture({ REVISION_HISTORY_LIMIT: '0' })
     const created = await sites.createSite(owner, { operationId: crypto.randomUUID(), name: 'Cached', files: [{ path: 'index.html', content: 'old' }, { path: 'a.css', content: 'a{}' }] })
     const first = await sites.listFiles(owner, { siteId: created.site.id })
     // The revision is immutable while retained, so later reads must not depend on disk.
@@ -669,11 +669,11 @@ describe('complete site revisions', () => {
   })
 
   it('recovers an operation committed before its response and removes finalized orphans', async () => {
-    const { dataDir, sites: initial, sql, owner } = await fixture()
+    const { dataDir, sites: initial, sql, owner } = await fixture({ REVISION_HISTORY_LIMIT: '0' })
     const created = await initial.createSite(owner, { operationId: crypto.randomUUID(), name: 'Recovery', files: [{ path: 'index.html', content: 'old' }] })
     await initial.close(); sql.close()
     const config = parseConfig({ NODE_ENV: 'test', APP_ORIGIN: 'https://app.example.com', CONTENT_BASE_DOMAIN: 'sites.example.com', DATA_DIR: dataDir,
-      ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'aa'.repeat(16)}$${'bb'.repeat(32)}`, MIN_FREE_DISK_MB: '1' })
+      ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'aa'.repeat(16)}$${'bb'.repeat(32)}`, MIN_FREE_DISK_MB: '1', REVISION_HISTORY_LIMIT: '0' })
     const operationId = crypto.randomUUID()
     const command = { operationId, siteId: created.site.id, expectedVersion: 1, files: [{ path: 'index.html', content: 'committed' }] }
     const interruptedDb = new Database(join(dataDir, 'database.sqlite'))

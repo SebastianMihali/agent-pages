@@ -57,7 +57,7 @@ Visitors see the uploaded website on its own origin. This example is demo conten
 3. **Update in place.** Upload changed files, save an edit in the file workspace, or ask your agent to publish an update. Complete revisions become active atomically; the site's URL and visibility are preserved. Version checks prevent silently overwriting a concurrent update.
 4. **Control access and lifetime.** Keep the site private or explicitly make it public. Set or remove its expiration while it is live, export its files, or delete it when finished.
 
-Sites start private to their owner. New sites inherit the owner's expiration preset unless creation supplies an explicit expiration, and a live site's expiration can be changed later. An explicit visibility change makes a site public, and it can be made private again. The application and each site's uploaded code run on separate browser origins. Private sharing, multiple accounts, ZIP imports, SPA fallback and rollback are outside this MVP.
+Sites start private to their owner. New sites inherit the owner's expiration preset unless creation supplies an explicit expiration, and a live site's expiration can be changed later. An explicit visibility change makes a site public, and it can be made private again. The application and each site's uploaded code run on separate browser origins. Owners can inspect and restore bounded revision history through the dashboard, REST and MCP. Private sharing, multiple accounts, ZIP imports and SPA fallback are outside this MVP.
 
 ## Install with Docker Compose
 
@@ -163,6 +163,8 @@ Production requires HTTPS, an application hostname and a wildcard on one delegat
 The owner area includes an Overview of live sites, content totals and upcoming expirations. In Sites, select a file to open its dedicated editor screen and inspect its source or preview a raster image, download it, and edit supported UTF-8 text with CodeMirror 6. HTML and SVG are shown as source; pages open on their isolated site origin.
 
 Saving publishes immediately at the existing URL and preserves visibility. Drafts and undo history stay in memory while switching files; leaving warns before discarding unsaved edits. Conflicting agent updates require review. After session expiry, sign in in another tab and retry. Editing is limited to 256 KiB per file or a lower configured transport/file bound; binary, oversized and non-UTF-8 files remain downloadable. Up to 20 documents are retained in memory; drafts do not survive closing the tab. Overview content size counts live revisions, not physical disk usage.
+
+Revision history in the site detail lets the owner inspect retained files and confirm a restore. The default retains five previous revisions in addition to the active one, subject to storage capacity. Restoration preserves the site's URL, visibility and expiration while advancing its version. The overview shows retained history separately from active content. See [revision history and restoration](docs/api.md#revision-history-and-restoration) for the API and [recovery and capacity](docs/operations.md#recovery-and-capacity) for storage policy.
 
 ## Export and delete a site
 

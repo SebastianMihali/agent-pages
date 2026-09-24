@@ -4,6 +4,7 @@ export type AuditEvent =
   | { event: 'key_created' | 'key_revoked'; ownerId: string; keyId: string }
   | { event: 'site_visibility_changed'; ownerId: string; siteId: string; operationId: string; visibility: 'private' | 'public' }
   | { event: 'site_deleted'; ownerId: string; siteId: string; operationId: string }
+  | { event: 'site_revision_restored'; ownerId: string; siteId: string; operationId: string; fromRevisionId: string; toRevisionId: string; version: number }
 
 const safeId = (value: string) => /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : '[invalid]'
 
@@ -21,10 +22,16 @@ export function audit(input: AuditEvent): void {
       break
     case 'site_visibility_changed':
     case 'site_deleted':
+    case 'site_revision_restored':
       record.ownerId = safeId(input.ownerId)
       record.siteId = safeId(input.siteId)
       record.operationId = safeId(input.operationId)
       if (input.event === 'site_visibility_changed') record.visibility = input.visibility === 'public' ? 'public' : 'private'
+      if (input.event === 'site_revision_restored') {
+        record.fromRevisionId = safeId(input.fromRevisionId)
+        record.toRevisionId = safeId(input.toRevisionId)
+        record.version = String(input.version)
+      }
       break
     case 'login_rejected':
     case 'login_rate_limited':
