@@ -1,6 +1,15 @@
 import { expect, test } from '@playwright/test'
 import { appOrigin, bearer, createSite, issueKey, setVisibility, signIn } from './support'
 
+test.afterEach(async ({ page }) => {
+  const session = await (await page.request.get('/web/session')).json() as { authenticated: boolean; csrfToken: string }
+  if (!session.authenticated) return
+  const { keys } = await (await page.request.get('/web/keys')).json() as { keys: { id: string; label: string }[] }
+  for (const key of keys.filter((key) => key.label.startsWith('Device features '))) {
+    await page.request.post(`/web/keys/${key.id}/revoke`, { headers: { origin: appOrigin }, data: { csrfToken: session.csrfToken } })
+  }
+})
+
 test('a public sibling cannot read the application or another private site', async ({ browser, page }) => {
   console.log(`browser=${browser.browserType().name()} version=${browser.version()}`)
   await signIn(page)
@@ -54,6 +63,22 @@ test('a public sibling cannot read the application or another private site', asy
     cookie: 'empty',
   })
   expect(await page.getByText('Private target secret').count()).toBe(0)
+})
+
+test('site pages may prompt for device features that stay blocked on the application', async ({ browser, browserName, page }) => {
+  test.skip(browserName !== 'chromium', 'Firefox does not enforce Permissions-Policy response headers')
+  console.log(`browser=${browser.browserType().name()} version=${browser.version()}`)
+  const states = () => page.evaluate(() => Promise.all((['camera', 'microphone', 'geolocation'] as const)
+    .map(async (name) => (await navigator.permissions.query({ name: name as PermissionName })).state)))
+  await signIn(page)
+  expect(await states()).toEqual(['denied', 'denied', 'denied'])
+  const key = await issueKey(page, `Device features ${Date.now()}`)
+  const site = (await createSite(page.request, key, `Scanner ${Date.now()}`, [
+    { path: 'index.html', content: '<!doctype html><h1>Scanner</h1>' },
+  ])).site
+  const response = await page.goto((await setVisibility(page.request, key, site, 'public')).site.url)
+  expect(response?.headers()['permissions-policy']).toBe('camera=(self), microphone=(self), geolocation=(self), document-domain=()')
+  expect(await states()).toEqual(['prompt', 'prompt', 'prompt'])
 })
 
 type McpResponse = {

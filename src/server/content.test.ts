@@ -163,3 +163,31 @@ it('serves Markdown and PDF with exact bytes and content-host security headers w
     }
   } finally { await sites.close(); db.close(); await rm(directory, { recursive: true, force: true }) }
 })
+
+it('lets each site origin prompt for camera, microphone and geolocation while blocking document.domain', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agp-content-permissions-'))
+  const db = openDatabase(directory)
+  const config = parseConfig({ DATA_DIR: directory, APP_ORIGIN: 'https://app.example.com', CONTENT_BASE_DOMAIN: 'sites.example.com',
+    ADMIN_USERNAME: 'owner', ADMIN_PASSWORD_HASH: `scrypt$131072$8$1$${'a'.repeat(32)}$${'b'.repeat(64)}` })
+  const auth = createAuth(db, config)
+  const sites = await createSiteModule(config, db)
+  try {
+    const principal = { ownerId: auth.ownerId }
+    const { site } = await sites.createSite(principal, { operationId: randomUUID(), name: 'Scanner', files: [
+      { path: 'index.html', content: 'home' }, { path: 'app.js', content: 'run()' },
+    ] })
+    const handle = createContentHandler(config, sites, createAccess(db, auth, sites))
+    const policy = async (path: string, init?: RequestInit) => (await handle(new Request(`${site.url}/${path}`, init), site.id)).headers.get('permissions-policy')
+    const expected = 'camera=(self), microphone=(self), geolocation=(self), document-domain=()'
+    expect(await policy('')).toBe(expected)
+    const redirect = await handle(new Request(`${site.url}/`, {
+      headers: { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
+    }), site.id)
+    expect(redirect.status).toBe(303)
+    expect(redirect.headers.get('permissions-policy')).toBe(expected)
+    await sites.setVisibility(principal, { siteId: site.id, operationId: randomUUID(), expectedVersion: 1, visibility: 'public' })
+    for (const [path, init] of [['', undefined], ['app.js', undefined], ['', { method: 'HEAD' }], ['missing', undefined]] as const) {
+      expect(await policy(path, init)).toBe(expected)
+    }
+  } finally { await sites.close(); db.close(); await rm(directory, { recursive: true, force: true }) }
+})

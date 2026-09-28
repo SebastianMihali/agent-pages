@@ -36,7 +36,7 @@ Browser sessions use host-only, HttpOnly cookies with Secure enabled in producti
 
 Sites start private. Opening a private site uses a short-lived, one-use ticket posted from the application to the site's reserved `/_agent/session` endpoint. The site receives a host-only grant tied to its parent application session and visibility generation. Tickets and management credentials never appear in visitor URLs or uploaded files. Every private content request validates its grant and the site's current lifecycle. Invalid asset requests return a generic 404; document navigation can take the owner through the login/open flow.
 
-Publishing files preserves visibility. Only an explicit visibility operation makes a site public. Returning to private invalidates earlier grants and blocks new anonymous reads, but cannot recall previously downloaded content. All content responses use no-store and noindex policies. Service workers and embedding are restricted to protect the private-session handoff.
+Publishing files preserves visibility. Only an explicit visibility operation makes a site public. Returning to private invalidates earlier grants and blocks new anonymous reads, but cannot recall previously downloaded content. All content responses use no-store and noindex policies. Service workers and embedding are restricted to protect the private-session handoff. Site pages may request camera, microphone and geolocation for their own origin, subject to the visitor's browser prompt; the application origin denies these features.
 
 ### Why each site has its own origin
 
