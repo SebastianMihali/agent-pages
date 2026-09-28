@@ -174,7 +174,7 @@ it('lets each site origin prompt for camera, microphone and geolocation while bl
   try {
     const principal = { ownerId: auth.ownerId }
     const { site } = await sites.createSite(principal, { operationId: randomUUID(), name: 'Scanner', files: [
-      { path: 'index.html', content: '<video autoplay></video>' }, { path: 'app.js', content: 'navigator.mediaDevices.getUserMedia({ video: true })' },
+      { path: 'index.html', content: 'home' }, { path: 'app.js', content: 'run()' },
     ] })
     const handle = createContentHandler(config, sites, createAccess(db, auth, sites))
     const policy = async (path: string, init?: RequestInit) => (await handle(new Request(`${site.url}/${path}`, init), site.id)).headers.get('permissions-policy')

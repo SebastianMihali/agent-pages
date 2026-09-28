@@ -1,6 +1,15 @@
 import { expect, test } from '@playwright/test'
 import { appOrigin, bearer, createSite, issueKey, setVisibility, signIn } from './support'
 
+test.afterEach(async ({ page }) => {
+  const session = await (await page.request.get('/web/session')).json() as { authenticated: boolean; csrfToken: string }
+  if (!session.authenticated) return
+  const { keys } = await (await page.request.get('/web/keys')).json() as { keys: { id: string; label: string }[] }
+  for (const key of keys.filter((key) => key.label.startsWith('Device features '))) {
+    await page.request.post(`/web/keys/${key.id}/revoke`, { headers: { origin: appOrigin }, data: { csrfToken: session.csrfToken } })
+  }
+})
+
 test('a public sibling cannot read the application or another private site', async ({ browser, page }) => {
   console.log(`browser=${browser.browserType().name()} version=${browser.version()}`)
   await signIn(page)
@@ -63,24 +72,13 @@ test('site pages may prompt for device features that stay blocked on the applica
     .map(async (name) => (await navigator.permissions.query({ name: name as PermissionName })).state)))
   await signIn(page)
   expect(await states()).toEqual(['denied', 'denied', 'denied'])
-  const label = `Device features ${Date.now()}`
-  const key = await issueKey(page, label)
-  try {
-    const site = (await createSite(page.request, key, `Scanner ${Date.now()}`, [
-      { path: 'index.html', content: '<!doctype html><h1>Scanner</h1>' },
-    ])).site
-    const url = (await setVisibility(page.request, key, site, 'public')).site.url
-    const response = await page.goto(url)
-    expect(response?.headers()['permissions-policy']).toBe('camera=(self), microphone=(self), geolocation=(self), document-domain=()')
-    expect(await states()).toEqual(['prompt', 'prompt', 'prompt'])
-  } finally {
-    const session = await (await page.request.get(`${appOrigin}/web/session`)).json() as { csrfToken: string }
-    const { keys } = await (await page.request.get(`${appOrigin}/web/keys`)).json() as { keys: { id: string; label: string }[] }
-    for (const owned of keys.filter((owned) => owned.label === label)) {
-      const revoked = await page.request.post(`${appOrigin}/web/keys/${owned.id}/revoke`, { headers: { origin: appOrigin }, data: { csrfToken: session.csrfToken } })
-      expect(revoked.status(), await revoked.text()).toBe(200)
-    }
-  }
+  const key = await issueKey(page, `Device features ${Date.now()}`)
+  const site = (await createSite(page.request, key, `Scanner ${Date.now()}`, [
+    { path: 'index.html', content: '<!doctype html><h1>Scanner</h1>' },
+  ])).site
+  const response = await page.goto((await setVisibility(page.request, key, site, 'public')).site.url)
+  expect(response?.headers()['permissions-policy']).toBe('camera=(self), microphone=(self), geolocation=(self), document-domain=()')
+  expect(await states()).toEqual(['prompt', 'prompt', 'prompt'])
 })
 
 type McpResponse = {
