@@ -29,6 +29,6 @@ Use `delete_site` for a requested whole-site deletion, with its current version 
 
 ## Constraints and completion
 
-Paths are relative POSIX names: no hidden segments, traversal, backslashes, literal percent signs or top-level `_agent`. Supported static files are HTML, CSS, JS, JSON, common images/fonts, text and Markdown, XML, web manifests, source maps and PDF. The MVP has no ZIP upload, server execution, SPA fallback or shared private access.
+Paths are relative POSIX names: no hidden segments, traversal, backslashes, literal percent signs or top-level `_agent`. Supported static files are HTML, CSS, JS, JSON, common images/fonts, text and Markdown, XML, web manifests, source maps and PDF. The MVP has no ZIP upload, server execution, SPA fallback or shared private access. Site pages may use the camera, microphone and geolocation on their own origin after the visitor accepts the browser prompt; they cannot be embedded in other pages.
 
 After a change, read the affected file or manifest and check the returned version and visibility. Report the stable URL and, for private sites, the owner `openUrl`. Distinguish verified content from a browser preview you have not opened. For retryable `BUSY`, `RATE_LIMITED` or storage errors, honor retry guidance and use bounded retries with the original operation ID; surface a persistent failure instead of creating duplicate sites.

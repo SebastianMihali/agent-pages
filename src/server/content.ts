@@ -11,7 +11,8 @@ const securityHeaders = {
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
   'cross-origin-resource-policy': 'same-origin',
-  'permissions-policy': 'camera=(), microphone=(), geolocation=(), document-domain=()',
+  // Device features stay on the site's own origin; the browser still asks the visitor before granting them.
+  'permissions-policy': 'camera=(self), microphone=(self), geolocation=(self), document-domain=()',
   'origin-agent-cluster': '?1',
   // Hosted sites are for sharing test pages, never for search discovery.
   'x-robots-tag': 'noindex, nofollow',

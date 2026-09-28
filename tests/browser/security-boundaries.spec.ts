@@ -56,6 +56,33 @@ test('a public sibling cannot read the application or another private site', asy
   expect(await page.getByText('Private target secret').count()).toBe(0)
 })
 
+test('site pages may prompt for device features that stay blocked on the application', async ({ browser, browserName, page }) => {
+  test.skip(browserName !== 'chromium', 'Firefox does not enforce Permissions-Policy response headers')
+  console.log(`browser=${browser.browserType().name()} version=${browser.version()}`)
+  const states = () => page.evaluate(() => Promise.all((['camera', 'microphone', 'geolocation'] as const)
+    .map(async (name) => (await navigator.permissions.query({ name: name as PermissionName })).state)))
+  await signIn(page)
+  expect(await states()).toEqual(['denied', 'denied', 'denied'])
+  const label = `Device features ${Date.now()}`
+  const key = await issueKey(page, label)
+  try {
+    const site = (await createSite(page.request, key, `Scanner ${Date.now()}`, [
+      { path: 'index.html', content: '<!doctype html><h1>Scanner</h1>' },
+    ])).site
+    const url = (await setVisibility(page.request, key, site, 'public')).site.url
+    const response = await page.goto(url)
+    expect(response?.headers()['permissions-policy']).toBe('camera=(self), microphone=(self), geolocation=(self), document-domain=()')
+    expect(await states()).toEqual(['prompt', 'prompt', 'prompt'])
+  } finally {
+    const session = await (await page.request.get(`${appOrigin}/web/session`)).json() as { csrfToken: string }
+    const { keys } = await (await page.request.get(`${appOrigin}/web/keys`)).json() as { keys: { id: string; label: string }[] }
+    for (const owned of keys.filter((owned) => owned.label === label)) {
+      const revoked = await page.request.post(`${appOrigin}/web/keys/${owned.id}/revoke`, { headers: { origin: appOrigin }, data: { csrfToken: session.csrfToken } })
+      expect(revoked.status(), await revoked.text()).toBe(200)
+    }
+  }
+})
+
 type McpResponse = {
   result?: {
     tools?: Array<{ name: string }>
