@@ -180,6 +180,11 @@ it('lets each site origin prompt for camera, microphone and geolocation while bl
     const policy = async (path: string, init?: RequestInit) => (await handle(new Request(`${site.url}/${path}`, init), site.id)).headers.get('permissions-policy')
     const expected = 'camera=(self), microphone=(self), geolocation=(self), document-domain=()'
     expect(await policy('')).toBe(expected)
+    const redirect = await handle(new Request(`${site.url}/`, {
+      headers: { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
+    }), site.id)
+    expect(redirect.status).toBe(303)
+    expect(redirect.headers.get('permissions-policy')).toBe(expected)
     await sites.setVisibility(principal, { siteId: site.id, operationId: randomUUID(), expectedVersion: 1, visibility: 'public' })
     for (const [path, init] of [['', undefined], ['app.js', undefined], ['', { method: 'HEAD' }], ['missing', undefined]] as const) {
       expect(await policy(path, init)).toBe(expected)
