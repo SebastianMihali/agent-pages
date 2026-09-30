@@ -61,7 +61,7 @@ Sites start private to their owner. New sites inherit the owner's expiration pre
 
 ## Try it locally
 
-You can run Agent Pages on your own computer before setting up a domain. You need Git and Docker with Compose v2.
+You can run Agent Pages on your own computer before setting up a domain. You need Git and Docker Desktop, or Docker Engine 28 or newer with Compose v2. Older Linux engines can expose ports published on `127.0.0.1` to their local network.
 
 ```sh
 git clone https://github.com/SebastianMihali/agent-pages.git
@@ -72,7 +72,7 @@ docker compose -f compose.local.yaml up --build --detach
 
 The first command builds the image and asks for an owner password without echoing it. Only its hash is stored, in a local Docker volume. Open `http://app.agent-pages.localhost:3000` in a browser that resolves `*.localhost` to your computer, such as Chrome or Firefox, and sign in as `owner`.
 
-To connect an agent, create a key in **API keys** and follow the [agent setup guide](docs/agent-setup.md) using `http://app.agent-pages.localhost:3000/mcp` as the MCP URL.
+To connect an agent, create a key in **API keys** and follow the [agent setup guide](docs/agent-setup.md) using `http://app.agent-pages.localhost:3000/mcp` as the MCP URL. If the agent reports that the host cannot be found, its system resolver does not map `*.localhost` to your computer. Add `127.0.0.1 app.agent-pages.localhost` to your hosts file; an IP address in the URL itself is rejected.
 
 This instance uses development HTTP and listens only on `127.0.0.1`, so its sites, including public ones, are reachable only from this computer. Stop it with `docker compose -f compose.local.yaml down`. Add `--volumes` to delete its sites and password. For a real installation, follow the steps below.
 

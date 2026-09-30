@@ -44,9 +44,12 @@ services:
       - sh
       - -c
       - |
-        hash="$$(node scripts/password-hash.ts)" || exit 1
+        set -e
+        hash="$$(node scripts/password-hash.ts)"
         umask 022
-        printf '%s\n' "$$hash" > /config/admin-password-hash
+        # Replace the hash atomically so a failed write keeps the previous one.
+        printf '%s\n' "$$hash" > /config/admin-password-hash.tmp
+        mv /config/admin-password-hash.tmp /config/admin-password-hash
         echo 'Password saved. Restart a running instance to apply it.' >&2
     volumes:
       - config:/config
