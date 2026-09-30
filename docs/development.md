@@ -21,6 +21,8 @@ pnpm dev
 
 Open `http://app.agent-pages.localhost:3000`. Content uses `<site-id>.sites.agent-pages.localhost:3000`. Development HTTP mode is rejected in production; browser security tests use a separate HTTPS fixture.
 
+To run the built image with the same hostnames instead, without a host Node installation, use [`compose.local.yaml`](../compose.local.yaml) as described in the README's [Try it locally](../README.md#try-it-locally). It stores the owner password hash in a Docker volume and keeps data separate from `.data/`.
+
 `better-sqlite3` and `fs-ext` contain native code. A clean install needs a supported prebuilt binary or Python, Make and a C++ compiler. The Docker build installs those tools and builds modules for its Linux architecture. Host `node_modules` must not be copied into the image.
 
 ## Verification

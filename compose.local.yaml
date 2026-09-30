@@ -1,0 +1,56 @@
+# Try Agent Pages on this computer without DNS, certificates or a reverse proxy.
+# It uses development HTTP on .localhost hostnames, which only this machine can
+# reach. Use compose.yaml with HTTPS for a real installation.
+name: agent-pages-local
+
+services:
+  agent-pages:
+    image: agent-pages:local
+    build: .
+    # The owner password hash comes from the `password` service below.
+    command:
+      - sh
+      - -c
+      - |
+        if ! ADMIN_PASSWORD_HASH="$$(cat /config/admin-password-hash 2>/dev/null)"; then
+          echo 'Set a password first: docker compose -f compose.local.yaml run --rm password' >&2
+          exit 1
+        fi
+        export ADMIN_PASSWORD_HASH
+        exec node .output/server/index.mjs
+    environment:
+      NODE_ENV: development
+      APP_ORIGIN: http://app.agent-pages.localhost:3000
+      CONTENT_BASE_DOMAIN: sites.agent-pages.localhost
+      DATA_DIR: /data
+      ADMIN_USERNAME: owner
+      HOST: 0.0.0.0
+      PORT: 3000
+    ports:
+      - '127.0.0.1:3000:3000'
+    volumes:
+      - data:/data
+      - config:/config:ro
+    stop_grace_period: 130s
+
+  # Prompts for the owner password without echo and stores only its hash.
+  password:
+    image: agent-pages:local
+    build: .
+    profiles: [setup]
+    # The fresh config volume belongs to root; the application reads it as node.
+    user: root
+    command:
+      - sh
+      - -c
+      - |
+        hash="$$(node scripts/password-hash.ts)" || exit 1
+        umask 022
+        printf '%s\n' "$$hash" > /config/admin-password-hash
+        echo 'Password saved. Restart a running instance to apply it.' >&2
+    volumes:
+      - config:/config
+
+volumes:
+  data:
+  config:

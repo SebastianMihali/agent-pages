@@ -27,6 +27,9 @@ ENV DATA_DIR=/data \
 WORKDIR /app
 
 COPY --from=build --chown=node:node /app/.output ./.output
+# The password helper runs from the image, so an installation needs no host Node.
+COPY scripts/password-hash.ts ./scripts/
+COPY src/server/auth/password.ts ./src/server/auth/
 
 RUN mkdir /data && chown node:node /data
 
