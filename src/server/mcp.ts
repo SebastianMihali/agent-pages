@@ -18,7 +18,7 @@ export function createMcpHandler(config: AppConfig, dependencies: {
         return new Response(null, { status: 405, headers: { allow: 'POST', 'cache-control': 'no-store' } })
       }
       const parsedBody = await readJson(request, config.limits.maxJsonBodyBytes)
-      server = new McpServer({ name: 'agent-pages', version: '0.1.0' })
+      server = new McpServer({ name: 'agent-pages', version: '0.2.0' })
       dependencies.register(server, principal)
       const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true })
       await server.connect(transport)
