@@ -1,10 +1,71 @@
 # Agent Pages
 
-Self-hosted static hosting for coding agents and their owners. Create a site, receive a stable URL and update its files through the dashboard, MCP or REST.
+[![CI](https://github.com/SebastianMihali/agent-pages/actions/workflows/ci.yml/badge.svg)](https://github.com/SebastianMihali/agent-pages/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/SebastianMihali/agent-pages)](https://github.com/SebastianMihali/agent-pages/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Built almost entirely through vibe coding.**
+Coding agents can build a report, a prototype or a landing page in minutes, but the result usually stays on localhost. Agent Pages gives them somewhere to publish it: a stable, private URL on your own server that you can open from any device and share when you choose.
 
-[Visual tour](#visual-tour) · [How it works](#how-it-works) · [Install](#install-with-docker-compose) · [Connect an agent](#connect-an-agent)
+![Claude Code creates a launch checklist page, publishes it to Agent Pages over MCP and returns a private URL; the page opens on its own origin, and the owner makes it public from the dashboard](docs/screenshots/demo.gif)
+
+<sub>A real Claude Code session against a local instance started with <code>compose.local.yaml</code>, condensed and replayed. The prompt is shortened.</sub>
+
+[Try it locally](#try-it-locally) · [Connect an agent](#connect-an-agent) · [How it's built](#how-its-built) · [Install on a server](#install-with-docker-compose) · [Documentation](#documentation)
+
+## Features
+
+- **Publish from any agent.** MCP tools and a REST API work with Claude Code, Codex and other clients. A bundled skill teaches the agent the publishing workflow.
+- **Private by default.** A new site is visible only to its owner until it is explicitly made public.
+- **Stable URLs.** Updates publish atomically at the same address, and version checks stop two agents from silently overwriting each other.
+- **Isolated origins.** Each site's code runs on its own hostname, separate from the dashboard and API.
+- **Owner dashboard.** Upload files or folders, edit text in the browser, restore earlier revisions, set expirations and export a ZIP.
+- **Self-hosted.** One container and one data volume on your server and domain.
+
+## Try it locally
+
+You can run Agent Pages on your own computer before setting up a domain. You need Git and Docker Desktop, or Docker Engine 28 or newer with Compose v2. Older Linux engines can expose ports published on `127.0.0.1` to their local network.
+
+```sh
+git clone https://github.com/SebastianMihali/agent-pages.git
+cd agent-pages
+docker compose -f compose.local.yaml run --rm password
+docker compose -f compose.local.yaml up --build --detach
+```
+
+The first command builds the image and asks for an owner password without echoing it. Only its hash is stored, in a local Docker volume. Open `http://app.agent-pages.localhost:3000` in a browser that resolves `*.localhost` to your computer, such as Chrome or Firefox, and sign in as `owner`.
+
+To connect an agent, create a key in **API keys** and follow the [agent setup guide](docs/agent-setup.md) using `http://app.agent-pages.localhost:3000/mcp` as the MCP URL. If the agent reports that the host cannot be found, its system resolver does not map `*.localhost` to your computer. Add `127.0.0.1 app.agent-pages.localhost` to your hosts file; an IP address in the URL itself is rejected.
+
+This instance uses development HTTP and listens only on `127.0.0.1`, so its sites, including public ones, are reachable only from this computer. Stop it with `docker compose -f compose.local.yaml down`. Add `--volumes` to delete its sites and password. For a real installation, follow [Install with Docker Compose](#install-with-docker-compose).
+
+## Connect an agent
+
+The application includes an MCP server at `https://app.example.com/mcp` and a bearer-authenticated REST API at `https://app.example.com/api`. Create a dedicated API key in the dashboard and supply it through the agent process environment as `AGENT_PAGES_API_KEY`.
+
+```sh
+npx skills add https://github.com/SebastianMihali/agent-pages.git
+```
+
+Follow [Agent setup](docs/agent-setup.md) to configure MCP or REST and copy a ready-to-use instruction for your agent. See [REST API](docs/api.md) for endpoints, payloads, uploads and retry rules. Keep credentials out of prompts and uploaded site files.
+
+## How it works
+
+1. **Create a site.** Upload static files or a folder containing a root `index.html` from the dashboard, or let an agent create it through MCP or REST. Every new site starts private and receives a stable URL.
+2. **Review the result.** Choose **Open site** to view it, or inspect its files in the dashboard. Uploaded pages run on a separate origin from the owner workspace.
+3. **Update in place.** Upload changed files, save an edit in the file workspace, or ask your agent to publish an update. Complete revisions become active atomically; the site's URL and visibility are preserved. Version checks prevent silently overwriting a concurrent update.
+4. **Control access and lifetime.** Keep the site private or explicitly make it public. Set or remove its expiration while it is live, export its files, or delete it when finished.
+
+Sites start private to their owner. New sites inherit the owner's expiration preset unless creation supplies an explicit expiration, and a live site's expiration can be changed later. An explicit visibility change makes a site public, and it can be made private again. The application and each site's uploaded code run on separate browser origins. Owners can inspect and restore bounded revision history through the dashboard, REST and MCP. Private sharing, multiple accounts, ZIP imports and SPA fallback are outside this MVP.
+
+## How it's built
+
+Agent Pages treats everything an agent uploads as untrusted and every network response as something that can be lost. The [architecture guide](docs/architecture.md) records each decision and its trade-offs.
+
+- **One domain module, three transports.** REST, MCP and the dashboard adapt the same site operations, so version checks, quotas and receipts behave identically everywhere.
+- **Atomic publication.** Each change prepares a complete immutable revision and activates it in one SQLite transaction. Visitors never see a partial batch, and startup recovers interrupted work before reporting ready.
+- **Safe retries.** Every mutation carries a caller-generated operation ID. Retrying after a lost response returns the original result instead of publishing twice.
+- **Origin isolation.** Uploaded HTML and JavaScript run on a per-site hostname. Private sites are opened through a one-use ticket, so management credentials never reach hosted pages.
+- **Tested at the boundaries.** Tests run against real SQLite databases and file trees, simulate crashes in child processes, and exercise security boundaries in Chromium and Firefox over HTTPS.
 
 ## Visual tour
 
@@ -49,32 +110,6 @@ Visitors see the uploaded website on its own origin. This example is demo conten
 ![A rendered demo website hosted by Agent Pages, with a studio introduction and three service columns](docs/screenshots/hosted-site.png)
 
 </details>
-
-## How it works
-
-1. **Create a site.** Upload static files or a folder containing a root `index.html` from the dashboard, or let an agent create it through MCP or REST. Every new site starts private and receives a stable URL.
-2. **Review the result.** Choose **Open site** to view it, or inspect its files in the dashboard. Uploaded pages run on a separate origin from the owner workspace.
-3. **Update in place.** Upload changed files, save an edit in the file workspace, or ask your agent to publish an update. Complete revisions become active atomically; the site's URL and visibility are preserved. Version checks prevent silently overwriting a concurrent update.
-4. **Control access and lifetime.** Keep the site private or explicitly make it public. Set or remove its expiration while it is live, export its files, or delete it when finished.
-
-Sites start private to their owner. New sites inherit the owner's expiration preset unless creation supplies an explicit expiration, and a live site's expiration can be changed later. An explicit visibility change makes a site public, and it can be made private again. The application and each site's uploaded code run on separate browser origins. Owners can inspect and restore bounded revision history through the dashboard, REST and MCP. Private sharing, multiple accounts, ZIP imports and SPA fallback are outside this MVP.
-
-## Try it locally
-
-You can run Agent Pages on your own computer before setting up a domain. You need Git and Docker Desktop, or Docker Engine 28 or newer with Compose v2. Older Linux engines can expose ports published on `127.0.0.1` to their local network.
-
-```sh
-git clone https://github.com/SebastianMihali/agent-pages.git
-cd agent-pages
-docker compose -f compose.local.yaml run --rm password
-docker compose -f compose.local.yaml up --build --detach
-```
-
-The first command builds the image and asks for an owner password without echoing it. Only its hash is stored, in a local Docker volume. Open `http://app.agent-pages.localhost:3000` in a browser that resolves `*.localhost` to your computer, such as Chrome or Firefox, and sign in as `owner`.
-
-To connect an agent, create a key in **API keys** and follow the [agent setup guide](docs/agent-setup.md) using `http://app.agent-pages.localhost:3000/mcp` as the MCP URL. If the agent reports that the host cannot be found, its system resolver does not map `*.localhost` to your computer. Add `127.0.0.1 app.agent-pages.localhost` to your hosts file; an IP address in the URL itself is rejected.
-
-This instance uses development HTTP and listens only on `127.0.0.1`, so its sites, including public ones, are reachable only from this computer. Stop it with `docker compose -f compose.local.yaml down`. Add `--volumes` to delete its sites and password. For a real installation, follow the steps below.
 
 ## Install with Docker Compose
 
@@ -175,43 +210,22 @@ Open `http://app.agent-pages.localhost:3000` and sign in. The dashboard lets you
 
 Production requires HTTPS, an application hostname and a wildcard on one delegated content subdomain such as `sites.example.com`; the rest of a shared domain stays untouched, and the wildcard certificate needs the DNS-01 challenge. See [development and validation](docs/development.md) and [container, proxy and backup operations](docs/operations.md). Production data belongs on one local persistent volume with one application process.
 
-## Owner workspace
-
-The owner area includes an Overview of live sites, content totals and upcoming expirations. In Sites, select a file to open its dedicated editor screen and inspect its source or preview a raster image, download it, and edit supported UTF-8 text with CodeMirror 6. HTML and SVG are shown as source; pages open on their isolated site origin.
-
-Saving publishes immediately at the existing URL and preserves visibility. Drafts and undo history stay in memory while switching files; leaving warns before discarding unsaved edits. Conflicting agent updates require review. After session expiry, sign in in another tab and retry. Editing is limited to 256 KiB per file or a lower configured transport/file bound; binary, oversized and non-UTF-8 files remain downloadable. Up to 20 documents are retained in memory; drafts do not survive closing the tab. Overview content size counts live revisions, not physical disk usage.
-
-Revision history in the site detail lets the owner inspect retained files and confirm a restore. The default retains five previous revisions in addition to the active one, subject to storage capacity. Restoration preserves the site's URL, visibility and expiration while advancing its version. The overview shows retained history separately from active content. See [revision history and restoration](docs/api.md#revision-history-and-restoration) for the API and [recovery and capacity](docs/operations.md#recovery-and-capacity) for storage policy.
-
-## Export and delete a site
-
-In site detail, choose **Export ZIP** to download the active revision, including nested pages and binary assets. The same download is available through `GET /api/sites/:siteId/export` with your bearer API key; browser sessions use the dedicated dashboard route. Export requires owner authentication even for public sites.
-
-The archive is named `site-<siteId>.zip`, with `index.html` at its root and all original relative file paths. It contains site content only, not account settings, credentials or revision history, and does not change visibility or expiration. ZIP entries are stored without compression to keep server CPU predictable. This is a portable content copy; use the [cold backup procedure](docs/operations.md) to restore an entire installation.
-
-Downloads retain one revision across concurrent updates. Deleted or expired sites cannot start an export; lifecycle changes can interrupt an in-progress archive. Retry a failed download from the beginning. Exports stream without a temporary archive, have a five-minute deadline, and share an installation-wide export limit equal to `MAX_CONCURRENT_MUTATIONS` (default 2), separate from mutation jobs.
-
-To remove a site, choose **Delete site** in its dashboard detail and confirm **Delete permanently**. The site immediately disappears from the list and its URL stops serving content; deletion cannot be undone. Export a ZIP first if you need a copy. If an agent has changed the site, the dashboard reloads its current version and asks you to confirm again.
-
-Agents can use `DELETE /api/sites/:siteId` with a bearer API key and a JSON body containing `operationId` (UUID) and `expectedVersion`, or call MCP `delete_site` with those fields plus `siteId`. Read the current version through `GET /api/sites/:siteId` or `get_site` first. Retry an uncertain result with the **same** operation ID and version. A successful result has `deleted: true`; `cleanupPending: true` means access is already disabled while disk cleanup runs in the background.
-
-## Connect an agent
-
-The application includes an MCP server at `https://app.example.com/mcp` and a bearer-authenticated REST API at `https://app.example.com/api`. Create a dedicated API key in the dashboard and supply it through the agent process environment as `AGENT_PAGES_API_KEY`.
-
-```sh
-npx skills add https://github.com/SebastianMihali/agent-pages.git
-```
-
-Follow [Agent setup](docs/agent-setup.md) to configure MCP or REST and copy a ready-to-use instruction for your agent. See [REST API](docs/api.md) for endpoints, payloads, uploads and retry rules. Keep credentials out of prompts and uploaded site files.
-
 ## Documentation
 
 - [Installation, proxy and backup operations](docs/operations.md)
 - [Agent and skill setup](docs/agent-setup.md)
+- [Owner dashboard: editing, revisions, export and deletion](docs/dashboard.md)
 - [REST API reference](docs/api.md)
 - [Development, tests and release publishing](docs/development.md)
 - [Architecture](docs/architecture.md) and [domain glossary](CONTEXT.md)
 - [Agent Pages skill](skills/agent-pages/SKILL.md)
+
+## Author
+
+Agent Pages is built by [Sebastian Mihali](https://sebastianmihali.com). I build MCP servers and tooling for coding agents, and I'm available for contract work. You can reach me through [sebastianmihali.com](https://sebastianmihali.com).
+
+Built with Claude Code. I designed the architecture and security boundaries and reviewed every change.
+
+## License
 
 Agent Pages is released under the [MIT License](LICENSE).
