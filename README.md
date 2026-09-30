@@ -4,9 +4,9 @@
 [![Release](https://img.shields.io/github/v/release/SebastianMihali/agent-pages)](https://github.com/SebastianMihali/agent-pages/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Coding agents can build a report, a prototype or a landing page in minutes, but the result usually stays on localhost. Agent Pages gives them somewhere to publish it: a stable, private URL on your own server that you can open from any device and share when you choose.
+Coding agents can build a report, a prototype or a landing page in minutes, but the result usually stays on localhost. Agent Pages gives them somewhere to publish it: a private site with a stable URL on your own server, which you can open from any device and make public when you choose.
 
-![Claude Code creates a launch checklist page, publishes it to Agent Pages over MCP and returns a private URL; the page opens on its own origin, and the owner makes it public from the dashboard](docs/screenshots/demo.gif)
+![Claude Code creates a launch checklist page, publishes it to Agent Pages over MCP as a private site and returns its URL; the page opens on its own origin, and the owner makes it public from the dashboard](docs/screenshots/demo.gif)
 
 <sub>A real Claude Code session against a local instance started with <code>compose.local.yaml</code>, condensed and replayed. The prompt is shortened.</sub>
 
@@ -32,7 +32,7 @@ docker compose -f compose.local.yaml run --rm password
 docker compose -f compose.local.yaml up --build --detach
 ```
 
-The first command builds the image and asks for an owner password without echoing it. Only its hash is stored, in a local Docker volume. Open `http://app.agent-pages.localhost:3000` in a browser that resolves `*.localhost` to your computer, such as Chrome or Firefox, and sign in as `owner`.
+The first command builds the image and asks for an owner password without echoing it. Only its hash is stored, in a local Docker volume. Open `http://app.agent-pages.localhost:3000` in a browser that resolves `*.localhost` to your computer, such as Chrome or Firefox, and sign in as `owner`. Each site gets its own address under `http://<site-id>.sites.agent-pages.localhost:3000`, shown in the dashboard and returned to agents.
 
 To connect an agent, create a key in **API keys** and follow the [agent setup guide](docs/agent-setup.md) using `http://app.agent-pages.localhost:3000/mcp` as the MCP URL. If the agent reports that the host cannot be found, its system resolver does not map `*.localhost` to your computer. Add `127.0.0.1 app.agent-pages.localhost` to your hosts file; an IP address in the URL itself is rejected.
 
@@ -62,8 +62,8 @@ Sites start private to their owner. New sites inherit the owner's expiration pre
 Agent Pages treats everything an agent uploads as untrusted and every network response as something that can be lost. The [architecture guide](docs/architecture.md) records each decision and its trade-offs.
 
 - **One domain module, three transports.** REST, MCP and the dashboard adapt the same site operations, so version checks, quotas and receipts behave identically everywhere.
-- **Atomic publication.** Each change prepares a complete immutable revision and activates it in one SQLite transaction. Visitors never see a partial batch, and startup recovers interrupted work before reporting ready.
-- **Safe retries.** Every mutation carries a caller-generated operation ID. Retrying after a lost response returns the original result instead of publishing twice.
+- **Atomic publication.** Each change prepares a complete immutable revision and activates it in one SQLite transaction, so no request is served from a half-applied batch. Startup recovers interrupted work before reporting ready.
+- **Safe retries.** Every site mutation carries a caller-generated operation ID. Retrying the identical request after a lost response returns the original result instead of publishing twice, for at least 24 hours.
 - **Origin isolation.** Uploaded HTML and JavaScript run on a per-site hostname. Private sites are opened through a one-use ticket, so management credentials never reach hosted pages.
 - **Tested at the boundaries.** Tests run against real SQLite databases and file trees, simulate crashes in child processes, and exercise security boundaries in Chromium and Firefox over HTTPS.
 
