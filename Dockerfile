@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:24.16.0-bookworm-slim AS build
+FROM node:24.22.1-bookworm-slim AS build
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends g++ make python3 \
@@ -17,7 +17,7 @@ COPY tsconfig.json vite.config.ts ./
 COPY src ./src
 RUN pnpm build
 
-FROM node:24.16.0-bookworm-slim AS runtime
+FROM node:24.22.1-bookworm-slim AS runtime
 
 ENV DATA_DIR=/data \
     HOST=0.0.0.0 \

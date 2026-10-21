@@ -143,11 +143,11 @@ Generate the password hash interactively using the helper in a temporary Node co
 docker run --rm -it \
   --mount "type=bind,source=$PWD,target=/workspace,readonly" \
   --workdir /workspace \
-  node:24.16.0-bookworm-slim \
+  node:24.22.1-bookworm-slim \
   node scripts/password-hash.ts
 ```
 
-Enter and confirm your chosen password; input is hidden. Copy the printed hash into `.env.production`. If you already have Node 24.16 installed, you can instead run `node scripts/password-hash.ts` directly.
+Enter and confirm your chosen password; input is hidden. Copy the printed hash into `.env.production`. If you already have Node 24.22.1 or newer 24.x installed, you can instead run `node scripts/password-hash.ts` directly.
 
 Edit `.env.production` to contain your production values:
 
@@ -192,7 +192,7 @@ To stop the installation while retaining its data, use `docker compose down`. Th
 
 ## Run locally for development
 
-From the repository root, use Node 24.16 and pnpm 11.5.0 (exact dependency versions are pinned). This starts the development server with isolated local data; use the Docker instructions above for a production installation.
+From the repository root, use Node 24.22.1 (or newer 24.x) and pnpm 11.5.0 (exact dependency versions are pinned). This starts the development server with isolated local data; use the Docker instructions above for a production installation.
 
 ```sh
 pnpm install --frozen-lockfile
